@@ -58,5 +58,5 @@ def test_get_song_info_inside_dlc_is_404_not_403(dlc_client):
     """A safe-but-missing path produces 404, not 403 — guards against
     over-rejecting legitimate filenames."""
     tc, _server, _dlc = dlc_client
-    r = tc.get("/api/song/some-song.psarc")
+    r = tc.get("/api/song/some-song.archive")
     assert r.status_code == 404, r.text

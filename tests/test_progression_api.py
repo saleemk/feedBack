@@ -82,7 +82,7 @@ def client(server):
     return TestClient(server.app)
 
 
-def _scored_play(client, filename="song.psarc", accuracy=0.9, score=900, arrangement=0):
+def _scored_play(client, filename="song.archive", accuracy=0.9, score=900, arrangement=0):
     return client.post("/api/stats", json={
         "filename": filename, "arrangement": arrangement,
         "score": score, "accuracy": accuracy,
@@ -294,7 +294,7 @@ def test_stale_quest_completion_does_not_double_award(client, server, monkeypatc
 
     summary = server.meta_db.record_progression_event(
         "song_completed",
-        {"filename": "y.psarc", "instrument": "guitar", "accuracy": 0.5, "score": 100},
+        {"filename": "y.archive", "instrument": "guitar", "accuracy": 0.5, "score": 100},
         server._get_progression_content(),
     )
     assert all(q["id"] != "d.one" for q in summary["quests_completed"])

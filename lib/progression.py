@@ -331,7 +331,7 @@ def load_content(root) -> tuple[dict, list]:
 def instrument_for_arrangement(arr_entry) -> str:
     """Map a library arrangement entry to a progression instrument.
 
-    PSARC/loose entries carry ``type`` (lead/rhythm/bass/combo); sloppaks may
+    archive/loose entries carry ``type`` (lead/rhythm/bass/combo); sloppaks may
     only carry ``name``. Vocals are recognised so they never count toward
     guitar challenges; everything else defaults to guitar.
     """
@@ -345,11 +345,11 @@ def instrument_for_arrangement(arr_entry) -> str:
         return "drums"
     if arr_type in ("piano", "keys"):
         return "keys"
-    # Check name before committing to a guitar type — legacy PSARC keys
+    # Check name before committing to a guitar type — legacy archive keys
     # arrangements often carry a generic type (lead/rhythm/combo) but have a
     # name like "Keys" or "Piano".  Name overrides the generic type for all
     # well-known non-guitar instruments so that scored keys runs advance the
-    # keys path and quests even when the Rocksmith XML type was not updated.
+    # keys path and quests even when the the source game XML type was not updated.
     if "bass" in name:
         return "bass"
     if "drum" in name or "percussion" in name:

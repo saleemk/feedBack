@@ -1,4 +1,4 @@
-"""Tests for lib/loosefolder.py — pure helpers for loose CDLC folders."""
+"""Tests for lib/loosefolder.py — pure helpers for loose custom song folders."""
 
 import json
 from pathlib import Path

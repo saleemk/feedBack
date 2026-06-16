@@ -677,7 +677,7 @@ def test_cent_offset_round_trips_through_wire_format(tmp_path):
 
 
 def test_cent_offset_non_finite_sanitized_to_zero(tmp_path):
-    # Malformed CDLC can carry NaN/Infinity, which float() accepts but which
+    # Malformed custom song can carry NaN/Infinity, which float() accepts but which
     # serialize to invalid JSON tokens over the song_info WebSocket. Parsing
     # must coerce them to a finite 0.0 so the payload stays valid JSON.
     for bad in ("NaN", "Infinity", "-Infinity", "inf", "nan"):

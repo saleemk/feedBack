@@ -68,8 +68,8 @@ test('legacy bridge hits are attributed to playback compatibility shims', () => 
 
 test('legacy song events update playback state without exposing raw filenames', () => {
     const window = loadPlayback();
-    window.slopsmith.emit('song:loading', { filename: '/Users/example/Secret Folder/Artist - Song_p.psarc', arrangement: 0 });
-    window.slopsmith.emit('song:loaded', makeTarget({ filename: '/Users/example/Secret Folder/Artist - Song_p.psarc' }));
+    window.slopsmith.emit('song:loading', { filename: '/Users/example/Secret Folder/Artist - Song_p.archive', arrangement: 0 });
+    window.slopsmith.emit('song:loaded', makeTarget({ filename: '/Users/example/Secret Folder/Artist - Song_p.archive' }));
     window.slopsmith.emit('song:play', { time: 4, audioT: 4, chartT: 4 });
     window.slopsmith.emit('song:seek', { from: 4, to: 12, reason: 'seek-by' });
 
@@ -81,7 +81,7 @@ test('legacy song events update playback state without exposing raw filenames', 
     assert.match(playback.state.target.settingsKey, /^settings-v1-[a-z0-9]{7}$/);
     assert.ok(playback.bridges.some(bridge => bridge.bridgeId === 'playback.song-events'));
     assert.doesNotMatch(encoded, /Secret Folder/);
-    assert.doesNotMatch(encoded, /Artist - Song_p\.psarc/);
+    assert.doesNotMatch(encoded, /Artist - Song_p\.archive/);
 });
 
 test('route changes are captured as redaction-safe playback lifecycle events', () => {

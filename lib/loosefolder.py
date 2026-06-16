@@ -54,7 +54,7 @@ def _iter_local(path: Path, pattern: str):
       * Reject directories (a folder named `audio.wem` or `lead.xml`
         would otherwise be matched by glob and break downstream
         readers / converters).
-      * Reject symlinks escaping the folder so a crafted CDLC can't
+      * Reject symlinks escaping the folder so a crafted custom song can't
         smuggle external content into the scan.
     """
     root = path.resolve()
@@ -176,7 +176,7 @@ def _arr_type_from_filename(stem: str) -> tuple:
 
 
 def _parse_xml_meta(xml_path: Path) -> dict:
-    """Parse a Rocksmith arrangement XML and return song-level metadata."""
+    """Parse a the source game arrangement XML and return song-level metadata."""
     try:
         root = ET.parse(str(xml_path)).getroot()
         if root.tag != "song":

@@ -1,4 +1,4 @@
-"""Rocksmith 2014 arrangement XML parser and song data models."""
+"""the source game arrangement XML parser and song data models."""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -81,14 +81,14 @@ class HandShape:
     chord_id: int
     start_time: float
     end_time: float
-    # EOF / some CDLC emit `arpeggio` on `<handShape>` (RS14+).
+    # EOF / some custom song emit `arpeggio` on `<handShape>` (RS14+).
     arpeggio: bool = False
 
 
 @dataclass
 class PhraseLevel:
     """One difficulty tier's worth of note/chord/anchor/hand-shape data for a
-    single phrase iteration. Rocksmith's XML stores these as `<level
+    single phrase iteration. the source game's XML stores these as `<level
     difficulty="N">` blocks that repeat for every difficulty tier the chart
     author wrote; slopsmith used to collapse them to the phrase's
     maxDifficulty and throw the rest away. Keeping them around lets the
@@ -129,11 +129,11 @@ class Arrangement:
     chord_templates: list[ChordTemplate] = field(default_factory=list)
     # None for single-level sources (GP converter, old sloppaks) — frontends
     # should treat a missing `phrases` as "no per-phrase difficulty data
-    # available, disable the slider". Populated from Rocksmith XML when
+    # available, disable the slider". Populated from the source game XML when
     # multiple `<level>` tiers exist.
     phrases: list[Phrase] | None = None
-    # Tone data lifted from the source PSARC by the sloppak converter and
-    # carried inline in the arrangement JSON. None for PSARC/loose playback
+    # Tone data lifted from the source archive by the sloppak converter and
+    # carried inline in the arrangement JSON. None for archive/loose playback
     # (the highway reads those tones from the XML directly) and for old
     # sloppaks predating tone support. Shape:
     #   {"base": str, "changes": [{"t": float, "name": str}],
@@ -141,14 +141,14 @@ class Arrangement:
     # `base`/`changes` drive the highway tone-change markers; `definitions`
     # feed the Tones plugin gear panel.
     tones: dict | None = None
-    # RS XML <arrangementProperties> flags for smart naming (slopsmith feat/arrangement).
+    # arrangement XML <arrangementProperties> flags for smart naming (slopsmith feat/arrangement).
     # Populated from the XML; default False/0 for sloppak / GP-imported sources.
     path_lead: bool = False
     path_rhythm: bool = False
     path_bass: bool = False
     bonus_arr: bool = False
     represent: int = 0
-    # RS2014 CDLC pitch-shift field (cents). Commonly -1200.0 (one octave
+    # RS2014 custom song pitch-shift field (cents). Commonly -1200.0 (one octave
     # down) for extended-range bass arrangements. 0.0 when absent or zero.
     cent_offset: float = 0.0
 
@@ -167,7 +167,7 @@ class Song:
     audio_path: str = ""
     # Optional lyrics, one entry per syllable: {"t": float, "d": float, "w": str}
     lyrics: list[dict] = field(default_factory=list)
-    # Provenance of the lyrics, when present. One of "xml" | "sng" | "whisperx" |
+    # Provenance of the lyrics, when present. One of "xml" | "notechart" | "whisperx" |
     # "user" — surfaces in the highway WS payload so the UI can render a badge
     # (e.g. "auto-transcribed — may be inaccurate" for whisperx). The sloppak
     # loader (lib/sloppak.py) defaults missing manifest keys to "xml" at load
@@ -374,7 +374,7 @@ def arrangement_string_count(arr: Arrangement) -> int:
     Used by the server to emit ``stringCount`` in the song_info
     WebSocket payload (slopsmith-plugin-3dhighway#7).
 
-    The RS XML schema always emits 6 ``<tuning>`` slots regardless
+    The arrangement XML schema always emits 6 ``<tuning>`` slots regardless
     of instrument (bass charts populate `string0`–`string3` and pad
     `string4`/`string5` with zeros), so ``len(arr.tuning)`` is not
     a reliable signal. Two independent signals get combined:
@@ -390,10 +390,10 @@ def arrangement_string_count(arr: Arrangement) -> int:
        defaults to 6. This catches the partial-string-usage case
        where notes don't span all the instrument's strings.
 
-    A third signal — ``len(arr.tuning)`` when it isn't the RS-XML
+    A third signal — ``len(arr.tuning)`` when it isn't the arrangement XML
     padded value of 6 — folds in for sloppak / GP-imported sources
     where the tuning array is explicitly trimmed (4 for bass, 5 for
-    5-string bass, 7 for 7-string guitar, etc.). RS-XML / PSARC
+    5-string bass, 7 for 7-string guitar, etc.). arrangement XML / archive
     sources always emit length 6 regardless of instrument, so we
     deliberately ignore that exact value to avoid mis-classifying
     bass arrangements as guitar. ``< 6`` and ``> 6`` are both
@@ -403,13 +403,13 @@ def arrangement_string_count(arr: Arrangement) -> int:
     where ``tuning_count`` is ``len(arr.tuning)`` when ``!= 6``,
     else 0. Worked examples:
 
-    * RS XML 4-string bass, full usage (tuning len 6, notes 0..3) →
+    * arrangement XML 4-string bass, full usage (tuning len 6, notes 0..3) →
       max(4, 4, 0) = 4
-    * RS XML 4-string bass, sparse usage (tuning len 6, notes 0..2) →
+    * arrangement XML 4-string bass, sparse usage (tuning len 6, notes 0..2) →
       max(3, 4, 0) = 4
-    * RS XML 6-string lead, full usage (tuning len 6, notes 0..5) →
+    * arrangement XML 6-string lead, full usage (tuning len 6, notes 0..5) →
       max(6, 6, 0) = 6
-    * RS XML 6-string lead, sparse usage (tuning len 6, notes 0..4) →
+    * arrangement XML 6-string lead, sparse usage (tuning len 6, notes 0..4) →
       max(5, 6, 0) = 6
     * Sloppak 5-string bass, sparse usage (tuning len 5, notes 0..3) →
       max(4, 4, 5) = 5
@@ -435,7 +435,7 @@ def arrangement_string_count(arr: Arrangement) -> int:
                 max_s = cn.string
     notes_count = max_s + 1 if max_s >= 0 else 0
     name_based = 4 if "bass" in arr.name.lower() else 6
-    # Tuning-length signal — only trustworthy when NOT the RS-XML
+    # Tuning-length signal — only trustworthy when NOT the arrangement XML
     # padded value of 6. Length 4/5 indicates explicit bass / 5-string
     # bass; length 7/8 indicates an extended-range guitar from GP.
     tuning_len = len(arr.tuning)
@@ -444,7 +444,7 @@ def arrangement_string_count(arr: Arrangement) -> int:
 
 
 def compute_smart_names(arrangements: list[Arrangement]) -> list[str | None]:
-    """Compute smart display names for arrangements based on RS XML path flags.
+    """Compute smart display names for arrangements based on arrangement XML path flags.
 
     Returns a list parallel to `arrangements`. Each entry is a descriptive
     name like "Lead", "Alt. Lead", "Bonus Rhythm", "Bass", or None for
@@ -454,14 +454,14 @@ def compute_smart_names(arrangements: list[Arrangement]) -> list[str | None]:
     Path-type resolution (first match wins):
     1. XML <arrangementProperties> flags (path_lead / path_rhythm / path_bass)
     2. Name-based fallback when ALL three flags are zero — keeps sloppak /
-       GP-imported sources and CDLC with unset flags working by mapping
+       GP-imported sources and custom song with unset flags working by mapping
        "Lead" / "Rhythm" / "Bass" / "Combo" → the matching path. Anything
        outside that set (Vocals, ShowLights, …) → None.
 
     Naming rules per path type (Lead / Rhythm / Bass):
     - Main group (bonusArr=False):
         represent=1 → "Lead" (or "Rhythm" / "Bass") — the canonical
-            arrangement. If no entry has represent=1 (CDLC with all-zero
+            arrangement. If no entry has represent=1 (custom song with all-zero
             flags), the first by represent-ascending order is promoted.
         remaining (n_alts == 1) → "Alt. Lead"
         remaining (n_alts >= 2) → "Alt. Lead 1", "Alt. Lead 2", ...
@@ -495,7 +495,7 @@ def compute_smart_names(arrangements: list[Arrangement]) -> list[str | None]:
     def _resolve(a: Arrangement) -> tuple[str | None, bool]:
         """Return (path_attr, bonus_arr) for an arrangement, applying the
         name-based fallback when XML flags are all zero. Defensive against
-        non-string names from hand-edited PSARCs / sloppak JSON."""
+        non-string names from hand-edited archives / sloppak JSON."""
         if a.path_lead:
             return "path_lead", bool(a.bonus_arr)
         if a.path_rhythm:
@@ -527,7 +527,7 @@ def compute_smart_names(arrangements: list[Arrangement]) -> list[str | None]:
         #   represent=1 → standard arrangement ("Lead")
         #   represent=0 (or any value != 1) → alternate arrangement ("Alt. Lead")
         #
-        # If no arrangement has represent=1 (e.g. CDLC defaults or all-zero
+        # If no arrangement has represent=1 (e.g. custom song defaults or all-zero
         # flags with name fallback), fall back to treating the first by
         # represent-ascending order as the standard so there is always a "Lead".
         main_pairs = [(i, a) for i, a in type_arrs if not _resolved[i][1]]
@@ -573,7 +573,7 @@ def compute_smart_names(arrangements: list[Arrangement]) -> list[str | None]:
 def _finite_float(value, default: float = 0.0) -> float:
     """Coerce ``value`` to a finite float, falling back to ``default``.
 
-    Malformed CDLC can put ``NaN``/``Infinity`` into float fields like RS2014
+    Malformed custom song can put ``NaN``/``Infinity`` into float fields like RS2014
     ``<centOffset>``; ``float()`` accepts those, but they serialize to the
     invalid JSON tokens ``NaN``/``Infinity`` (both over the highway WebSocket
     and into sloppak ``.json`` files), which breaks downstream parsing.
@@ -607,7 +607,7 @@ def arrangement_to_wire(arr: Arrangement) -> dict:
     if arr.phrases:
         out["phrases"] = [phrase_to_wire(p) for p in arr.phrases]
     # `tones` is additive — only emitted when the source carried tone data
-    # (sloppaks converted from a PSARC). Absent on PSARC/loose-derived
+    # (sloppaks converted from a archive). Absent on archive/loose-derived
     # Arrangements and old sloppaks; readers treat a missing key as
     # "no tones".
     if arr.tones:
@@ -681,7 +681,7 @@ def _int_optional(elem, attr, default=-1):
 
     Use for fields that are merely metadata hints (right-hand fingering,
     pick direction, etc.) where a malformed value from a third-party
-    Rocksmith XML emitter shouldn't abort the whole arrangement parse.
+    the source game XML emitter shouldn't abort the whole arrangement parse.
 
     Required-field readers (`string`, `fret`, `chordId`, …) keep using
     `_int` so a corrupted required attribute still fails fast at parse
@@ -708,7 +708,7 @@ def _bool(elem, attr):
 
 
 def _hand_shape_arpeggio_flag(elem) -> bool:
-    """Rocksmith / EOF may mark arpeggio on ``<handShape>`` (various casings)."""
+    """the source game / EOF may mark arpeggio on ``<handShape>`` (various casings)."""
     for attr in ("arpeggio", "Arpeggio", "arp", "Arp"):
         if _bool(elem, attr):
             return True
@@ -716,7 +716,7 @@ def _hand_shape_arpeggio_flag(elem) -> bool:
 
 
 def _chord_template_arpeggio_flag(elem) -> bool:
-    """Rocksmith commonly tags arpeggio templates in ``displayName`` via ``-arp``."""
+    """the source game commonly tags arpeggio templates in ``displayName`` via ``-arp``."""
     for attr in ("arpeggio", "Arpeggio", "arp", "Arp"):
         if _bool(elem, attr):
             return True
@@ -766,7 +766,7 @@ def _parse_note(n) -> Note:
 
 
 def parse_arrangement(xml_path: str) -> Arrangement:
-    """Parse a Rocksmith arrangement XML file."""
+    """Parse a the source game arrangement XML file."""
     tree = ET.parse(xml_path)
     root = tree.getroot()
 
@@ -800,8 +800,8 @@ def parse_arrangement(xml_path: str) -> Arrangement:
         except ValueError:
             pass
 
-    # CentOffset — RS2014 pitch-shift field (cents). Present in all RS XML
-    # sources (PSARC, loose folders, GP-converted XML). Absent in very old
+    # CentOffset — RS2014 pitch-shift field (cents). Present in all arrangement XML
+    # sources (archive, loose folders, GP-converted XML). Absent in very old
     # files; default 0.0.
     cent_offset = 0.0
     el = root.find("centOffset")
@@ -1049,7 +1049,7 @@ def parse_arrangement(xml_path: str) -> Arrangement:
             # wrote at or below this phrase's max — these are what the
             # master-difficulty slider selects between at render time.
             # Tiers above max_diff exist in some XMLs (authoring leftovers)
-            # and are skipped to match Rocksmith's in-game behaviour.
+            # and are skipped to match the source game's in-game behaviour.
             # Capture the extracted slices so the flat max-mastery merge
             # below can reuse one of them.
             phrase_levels: list[PhraseLevel] = []
@@ -1144,7 +1144,7 @@ def parse_arrangement(xml_path: str) -> Arrangement:
 def _convert_sng_to_xml(extracted_dir: str):
     """No-op stub.
 
-    Historically this converted proprietary encrypted ``.sng`` arrangement
+    Historically this converted proprietary encrypted ``.notechart`` arrangement
     files to XML via an external tool. That path has been removed: slopsmith
     reads only its own ``.sloppak`` format and loose-folder/GP/MusicXML-derived
     arrangement XML, and never decodes or decrypts proprietary archives. Kept
@@ -1156,7 +1156,7 @@ def _convert_sng_to_xml(extracted_dir: str):
 
 def load_song(extracted_dir: str) -> Song:
     """Load a song from a directory of arrangement XML/JSON files."""
-    # Proprietary SNG→XML conversion has been removed; this is now a no-op.
+    # Proprietary note-chart→XML conversion has been removed; this is now a no-op.
     _convert_sng_to_xml(extracted_dir)
 
     song = Song()
@@ -1165,7 +1165,7 @@ def load_song(extracted_dir: str) -> Song:
     # Build manifest lookups: xml_stem (lowercase) -> ArrangementName / path flags.
     # The manifest JSON is the authoritative source for path flags (pathLead /
     # pathRhythm / pathBass / bonusArr / represent) because the XML files bundled
-    # in official DLC PSARCs often have all path flags set to "0", while the
+    # in official DLC archives often have all path flags set to "0", while the
     # manifest correctly reflects what the authoring tool wrote.
     def _mprop_int(key: str, props: dict) -> int:
         val = props.get(key, 0)
@@ -1268,7 +1268,7 @@ def load_song(extracted_dir: str) -> Song:
         arrangement = parse_arrangement(str(xml_path))
 
         # Override path flags with manifest values when available. The XML
-        # bundled inside official DLC PSARCs often has all flags as "0", while
+        # bundled inside official DLC archives often has all flags as "0", while
         # the manifest JSON carries the correct values written by the DLC author.
         manifest_flags = _manifest_path_flags.get(xml_path.stem.lower())
         if manifest_flags:

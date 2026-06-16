@@ -9,7 +9,7 @@ test('exported diagnostics pseudonymize targets while local inspector may show d
         authorization: 'user-action',
         requesterId: 'core.player.controls',
         target: makeTarget({
-            filename: '/Users/example/DLC/Private Artist - Private Song_p.psarc',
+            filename: '/Users/example/DLC/Private Artist - Private Song_p.archive',
             title: 'Private Song',
             artist: 'Private Artist',
             arrangement: 'Lead',
@@ -36,7 +36,7 @@ test('diagnostic history is bounded for current and stopped sessions', async () 
     window.slopsmith.playback.registerTransportAdapter(makeAdapter());
 
     for (let index = 0; index < 7; index += 1) {
-        await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget({ filename: `song-${index}.psarc`, title: `Song ${index}` }) });
+        await dispatch(window, 'start', { authorization: 'user-action', requesterId: 'core.player.controls', target: makeTarget({ filename: `song-${index}.archive`, title: `Song ${index}` }) });
         for (let seek = 0; seek < 12; seek += 1) {
             await dispatch(window, 'seek', { requesterId: 'core.player.controls', time: seek });
         }
@@ -96,7 +96,7 @@ test('diagnostics redact requester ids and raw camel-case payload keys', async (
         accessToken: 'plain-secret-token',
         nativeHandleRef: 'native-secret-handle',
         mediaStream: 'raw-stream-id',
-        reason: '/Users/example/private song.psarc token=secret',
+        reason: '/Users/example/private song.archive token=secret',
         safeDetail: 'safe value',
     });
     window.slopsmith.playback.recordBridgeHit({

@@ -27,7 +27,7 @@ def client(server_mod):
         c.close()
 
 
-def _put(server_mod, filename="local.psarc", title="Local Song", artist="Local Artist"):
+def _put(server_mod, filename="local.archive", title="Local Song", artist="Local Artist"):
     server_mod.meta_db.put(filename, 1.0, 1, {
         "title": title,
         "artist": artist,
@@ -37,7 +37,7 @@ def _put(server_mod, filename="local.psarc", title="Local Song", artist="Local A
         "tuning": "E Standard",
         "arrangements": [{"index": 0, "name": "Lead", "notes": 1}],
         "has_lyrics": True,
-        "format": "psarc",
+        "format": "archive",
         "stem_count": 0,
         "stem_ids": [],
         "tuning_name": "E Standard",
@@ -66,7 +66,7 @@ class FakeLibraryProvider:
             "artist": "Remote Artist",
             "album": "Remote Album",
             "arrangements": [],
-            "format": "psarc",
+            "format": "archive",
         }], 1)
 
     def query_artists(self, **kwargs):
@@ -91,7 +91,7 @@ class FakeLibraryProvider:
 
     def sync_song(self, song_id: str):
         self.sync_song_id = song_id
-        return {"ok": True, "filename": "synced.psarc", "song_id": song_id}
+        return {"ok": True, "filename": "synced.archive", "song_id": song_id}
 
 
 class ReadOnlyLibraryProvider:
@@ -157,7 +157,7 @@ def test_local_provider_is_default_library_provider(server_mod, client):
     default_payload = client.get("/api/library").json()
     explicit_payload = client.get("/api/library", params={"provider": "local"}).json()
     assert default_payload == explicit_payload
-    assert default_payload["songs"][0]["filename"] == "local.psarc"
+    assert default_payload["songs"][0]["filename"] == "local.archive"
 
 
 def test_registered_provider_handles_library_endpoints(server_mod, client):
@@ -178,7 +178,7 @@ def test_registered_provider_handles_library_endpoints(server_mod, client):
         "size": "12",
         "sort": "title-desc",
         "dir": "desc",
-        "format": "psarc",
+        "format": "archive",
         "favorites": "1",
         "arrangements_has": "Lead,Rhythm",
         "has_lyrics": "1",
@@ -192,7 +192,7 @@ def test_registered_provider_handles_library_endpoints(server_mod, client):
     assert provider.page_kwargs["sort"] == "title-desc"
     assert provider.page_kwargs["direction"] == "desc"
     assert provider.page_kwargs["favorites_only"] is True
-    assert provider.page_kwargs["format_filter"] == "psarc"
+    assert provider.page_kwargs["format_filter"] == "archive"
     assert provider.page_kwargs["arrangements_has"] == ["Lead", "Rhythm"]
     assert provider.page_kwargs["has_lyrics"] == 1
     assert provider.page_kwargs["tunings"] == ["E Standard", "Drop D"]
@@ -225,7 +225,7 @@ def test_registered_provider_handles_library_endpoints(server_mod, client):
     assert provider.art_song_id == "remote-song-id"
 
     synced = client.post("/api/library/providers/remote:frodo/songs/remote-song-id/sync").json()
-    assert synced == {"ok": True, "filename": "synced.psarc", "song_id": "remote-song-id"}
+    assert synced == {"ok": True, "filename": "synced.archive", "song_id": "remote-song-id"}
     assert provider.sync_song_id == "remote-song-id"
 
 

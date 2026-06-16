@@ -1,4 +1,4 @@
-"""Convert Guitar Pro files (.gp5/.gp4/.gp3) to Rocksmith 2014 arrangement XML."""
+"""Convert Guitar Pro files (.gp5/.gp4/.gp3) to the source game arrangement XML."""
 
 import logging
 import re
@@ -18,9 +18,9 @@ def _extract_year(song: guitarpro.Song) -> str:
     """Pull a 4-digit year out of GP metadata.
 
     GP files have no dedicated year field; the year usually appears inside the
-    copyright string (e.g. "1998 Goat Head Music, WB Music Corp, USA"). RsCli
+    copyright string (e.g. "1998 Goat Head Music, WB Music Corp, USA"). the converter
     requires <albumYear> to parse as Int32, so we extract just the digits and
-    fall back to empty (which RsCli treats as no year) when nothing matches.
+    fall back to empty (which the converter treats as no year) when nothing matches.
     """
     for field_val in (getattr(song, "copyright", None), getattr(song, "subtitle", None)):
         if not field_val:
@@ -544,7 +544,7 @@ def convert_track(
     *,
     expand_repeats: bool = True,
 ) -> str:
-    """Convert a GP track to Rocksmith 2014 arrangement XML string.
+    """Convert a GP track to the source game arrangement XML string.
 
     Args:
         song: Parsed Guitar Pro song
@@ -558,7 +558,7 @@ def convert_track(
             once in authored order — equivalent to the pre-expansion behavior.
 
     Returns:
-        XML string of the Rocksmith arrangement
+        XML string of the the source game arrangement
     """
     track = song.tracks[track_index]
     num_strings = len(track.strings)
@@ -950,7 +950,7 @@ def _build_xml(
     # Tuning. RS2014 schema names 6 string slots; we always emit those
     # for compatibility, and emit additional string6+ attributes (up to
     # `len(tuning)-1`) for 7+ string arrangements. Slopsmith parses
-    # them; stock RS ignores them.
+    # them; the format ignores them.
     tuning_el = ET.SubElement(root, "tuning")
     for i in range(max(6, len(tuning))):
         tuning_el.set(f"string{i}", str(tuning[i] if i < len(tuning) else 0))
@@ -1149,7 +1149,7 @@ def list_tracks(gp_path: str) -> list[dict]:
 
 
 def auto_select_tracks(gp_path: str) -> tuple[list[int], dict[int, str]]:
-    """Auto-select guitar/bass/keys tracks and assign Rocksmith arrangement names.
+    """Auto-select guitar/bass/keys tracks and assign the source game arrangement names.
 
     Includes piano/keyboard tracks as "Keys" arrangements alongside
     guitar and bass tracks.
@@ -1205,7 +1205,7 @@ def auto_select_tracks(gp_path: str) -> tuple[list[int], dict[int, str]]:
                 role = "bass" if t["is_bass"] else "guitar"
                 selected.append((t["index"], role))
 
-    # Assign Rocksmith names: Lead, Rhythm, Combo, Bass, Keys, Drums
+    # Assign the source game names: Lead, Rhythm, Combo, Bass, Keys, Drums
     track_indices = []
     name_map = {}
     lead_count = 0
@@ -1243,14 +1243,14 @@ def convert_piano_track(
     *,
     expand_repeats: bool = True,
 ) -> str:
-    """Convert a GP piano/keyboard track to Rocksmith XML using MIDI encoding.
+    """Convert a GP piano/keyboard track to the source game XML using MIDI encoding.
 
-    Encodes MIDI notes into Rocksmith's string+fret format:
+    Encodes MIDI notes into the source game's string+fret format:
         string = midi_note // 24
         fret   = midi_note % 24
 
     This gives a range of 0-143, covering the full piano range within
-    Rocksmith's 6-string x 24-fret structure. The piano highway plugin
+    the source game's 6-string x 24-fret structure. The piano highway plugin
     decodes back via: midi = string * 24 + fret.
 
     Honors GP repeat brackets and D.S./D.C./Coda/Fine jumps when
@@ -1342,7 +1342,7 @@ def convert_piano_track(
                         base_midi = 60  # fallback to middle C
                     midi_note = base_midi + note.value
 
-                    # Encode into Rocksmith string+fret
+                    # Encode into the source game string+fret
                     rs_string = midi_note // 24
                     rs_fret = midi_note % 24
 
@@ -1449,9 +1449,9 @@ def convert_drum_track(
     *,
     expand_repeats: bool = True,
 ) -> str:
-    """Convert a GP drum/percussion track to Rocksmith XML using MIDI encoding.
+    """Convert a GP drum/percussion track to the source game XML using MIDI encoding.
 
-    Encodes MIDI drum note numbers into Rocksmith's string+fret format:
+    Encodes MIDI drum note numbers into the source game's string+fret format:
         string = midi_note // 24
         fret   = midi_note % 24
 
@@ -1534,7 +1534,7 @@ def convert_drum_track(
                     if midi_note not in GM_DRUM_MAP:
                         continue  # Skip unknown percussion sounds
 
-                    # Encode into Rocksmith string+fret
+                    # Encode into the source game string+fret
                     rs_string = midi_note // 24
                     rs_fret = midi_note % 24
 
@@ -1778,7 +1778,7 @@ def convert_file(
     *,
     expand_repeats: bool = True,
 ) -> list[str]:
-    """Convert a GP file to Rocksmith XMLs.
+    """Convert a GP file to the source game XMLs.
 
     Args:
         gp_path: Path to .gp5/.gp4/.gp3 file

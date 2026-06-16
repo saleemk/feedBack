@@ -198,7 +198,7 @@ def test_load_content_missing_root_is_nonfatal(tmp_path):
         ({"name": "Monkeys Medley"}, "guitar"),
         ({}, "guitar"),
         (None, "guitar"),
-        # name overrides generic guitar type (legacy PSARC keys arrangements)
+        # name overrides generic guitar type (legacy archive keys arrangements)
         ({"type": "lead", "name": "Keys"}, "keys"),
         ({"type": "combo", "name": "Piano"}, "keys"),
         ({"type": "lead", "name": "Bass"}, "bass"),
@@ -270,7 +270,7 @@ def test_select_quests_small_pool_returns_all():
 
 
 def _song_event(**payload):
-    base = {"filename": "song.psarc", "instrument": "guitar", "accuracy": 0.9, "score": 1000}
+    base = {"filename": "song.archive", "instrument": "guitar", "accuracy": 0.9, "score": 1000}
     base.update(payload)
     return {"type": "song_completed", "payload": base}
 
@@ -290,10 +290,10 @@ def test_goal_matches_song_filters():
         {"type": "song_completed", "instrument": "guitar", "target": 1}, _song_event()
     )
     assert goal_matches_event(
-        {"type": "song_completed", "filename": "song.psarc", "target": 1}, _song_event()
+        {"type": "song_completed", "filename": "song.archive", "target": 1}, _song_event()
     )
     assert not goal_matches_event(
-        {"type": "song_completed", "filename": "other.psarc", "target": 1}, _song_event()
+        {"type": "song_completed", "filename": "other.archive", "target": 1}, _song_event()
     )
     assert not goal_matches_event(
         {"type": "song_completed", "min_score": 2000, "target": 1}, _song_event()
@@ -472,18 +472,18 @@ def test_evaluate_event_counts_prior_completions_toward_levelup():
 def test_evaluate_event_distinct_dedupes_replays():
     content = _content()
     snapshot = _snapshot(paths={"guitar": 1})  # working level-2 set
-    first = evaluate_event(_song_event(filename="a.psarc"), content, snapshot)
+    first = evaluate_event(_song_event(filename="a.archive"), content, snapshot)
     ch = first["challenges"][0]
     assert ch["count"] == 1 and not ch["completed"]
-    assert ch["detail"] == {"seen": ["a.psarc"]}
+    assert ch["detail"] == {"seen": ["a.archive"]}
 
     snapshot["challenges"] = {
         "guitar.l2.distinct": {"count": 1, "completed": False, "detail": ch["detail"]}
     }
-    replay = evaluate_event(_song_event(filename="a.psarc"), content, snapshot)
+    replay = evaluate_event(_song_event(filename="a.archive"), content, snapshot)
     assert replay["challenges"] == []  # same song again: no advance
 
-    other = evaluate_event(_song_event(filename="b.psarc"), content, snapshot)
+    other = evaluate_event(_song_event(filename="b.archive"), content, snapshot)
     ch2 = other["challenges"][0]
     assert ch2["count"] == 2 and ch2["completed"]
     assert other["level_ups"] == [{"path_id": "guitar", "new_level": 2}]
@@ -493,7 +493,7 @@ def test_evaluate_event_default_counts_replays():
     # guitar.l1.three has no distinct flag: the same song three times completes it.
     content = _content()
     snapshot = _snapshot(challenges={"guitar.l1.three": {"count": 2, "completed": False}})
-    outcome = evaluate_event(_song_event(filename="same.psarc", accuracy=0.1), content, snapshot)
+    outcome = evaluate_event(_song_event(filename="same.archive", accuracy=0.1), content, snapshot)
     by_id = {c["challenge_id"]: c for c in outcome["challenges"]}
     assert by_id["guitar.l1.three"]["count"] == 3
     assert by_id["guitar.l1.three"]["completed"] is True

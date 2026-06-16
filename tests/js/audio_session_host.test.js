@@ -22,13 +22,13 @@ test('audio session lifecycle and snapshots redact source identity with per-snap
     const window = loadAudioSession();
     const audioSession = window.slopsmith.audioSession;
 
-    audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.psarc', songKey: '/Users/example/DLC/song.psarc', songFormat: 'psarc' });
+    audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.archive', songKey: '/Users/example/DLC/song.archive', songFormat: 'archive' });
     audioSession.setRoute({ routeKind: 'html5', availability: 'available', deviceLabel: 'Scarlett 2i2 Serial 1234' });
     audioSession.registerInputSource({ sourceId: 'mic-raw-id', logicalSourceKey: 'browser:instrument:primary', providerId: 'browser', kind: 'instrument', channelCount: 2, availability: 'available', label: 'Scarlett 2i2 Serial 1234' });
 
     const snapshot = audioSession.snapshot();
     const encoded = JSON.stringify(snapshot);
-    assert.equal(snapshot.session.songFormat, 'psarc');
+    assert.equal(snapshot.session.songFormat, 'archive');
     assert.match(snapshot.domains['audio-input'].sources[0].diagnosticsPseudonym, /^source-\d{2}$/);
     assert.equal(encoded.includes('Scarlett'), false);
     assert.equal(encoded.includes('/Users/example'), false);
@@ -156,7 +156,7 @@ test('audio-mix diagnostics include faders routes analysers bridge hits and reda
     const window = loadAudioSession();
     const api = window.slopsmith.capabilities;
     const audioSession = window.slopsmith.audioSession;
-    audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.psarc', songKey: '/Users/example/DLC/song.psarc' });
+    audioSession.startSession({ sessionId: 'main:/Users/example/DLC/song.archive', songKey: '/Users/example/DLC/song.archive' });
     audioSession.setRoute({ routeKind: 'desktop', availability: 'degraded', deviceLabel: 'Secret Studio Output', fallbackReason: 'fallback token=abc123 at /Users/example/device' });
     audioSession.setAnalyser({ source: 'plugin', availability: 'available', participantId: 'plugin.visualizer', reason: 'ok', rawFft: [1, 2, 3] });
     audioSession.recordBridgeHit({ domain: 'audio-mix', bridgeId: 'audio-mix.fader-registry', legacySurface: 'registerFader', participantId: 'legacy.delay', outcome: 'failed', reason: 'password=abc path /Users/example/plugin' });

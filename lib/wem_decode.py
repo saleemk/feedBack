@@ -58,7 +58,7 @@ def _convert_riff_wem(data: bytes, output_path: str) -> bool:
 
     if codec == 0xFFFF or codec == 0x0069:
         # Wwise Vorbis — audio_data contains raw Ogg pages or encoded Vorbis
-        # For Rocksmith CDLC, the data is typically packed Vorbis
+        # For the source game custom song, the data is typically packed Vorbis
         # Try writing raw data as OGG (some WEM files have valid OGG inside)
         if _try_extract_ogg_pages(audio_data, output_path):
             return True

@@ -128,7 +128,7 @@ def _resolve_audio_asset(zf, root=None) -> tuple[str, str | None]:
 
 # GP8 uses 44100 Hz internally for FrameOffset values regardless of the
 # OGG file's own sample rate. The embedded OGG is typically 48000 Hz
-# (Rocksmith's preferred rate) and should be passed through as-is —
+# (the source game's preferred rate) and should be passed through as-is —
 # do NOT resample it. The 44100 constant is only used here to convert
 # FrameOffset integers to seconds for timing math; it never touches audio.
 # Verified: 44100 gives <10ms sync error; 48000 gives ~530ms error.

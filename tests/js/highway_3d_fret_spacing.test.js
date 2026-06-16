@@ -1,5 +1,5 @@
 // Pins the fret-spacing setting in plugins/highway_3d/screen.js (PR #329).
-// The board can render fret columns either Uniform (equal width, Rocksmith
+// The board can render fret columns either Uniform (equal width, the source game
 // Remastered style) or Logarithmic (real instrument geometry), switchable at
 // runtime via window.h3dSetFretSpacing and persisted in localStorage. A
 // refactor that renames the storage key, drops the uniform/log branch in

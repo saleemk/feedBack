@@ -1,4 +1,4 @@
-"""Audio extraction and conversion for Rocksmith CDLC."""
+"""Audio extraction and conversion for the source game custom song."""
 
 import logging
 import os

@@ -302,7 +302,7 @@ def _ensure_smart_names(arrangements: list[dict]) -> list[dict]:
 
     In the meantime this function provides a best-effort on-the-fly computation.
     However, when multiple arrangements share the same name (e.g. two "Combo"
-    tracks in a PSARC that bundles all path flags as zero), name-based inference
+    tracks in a archive that bundles all path flags as zero), name-based inference
     cannot distinguish Lead from Rhythm — so we emit ``smart_name: null`` and
     let the UI fall back to the legacy name until the background rescan corrects
     the row.  Arrangements that already have the field are never modified.
@@ -374,7 +374,7 @@ class MetadataDB:
                 tuning TEXT,
                 arrangements TEXT,
                 has_lyrics INTEGER DEFAULT 0,
-                format TEXT DEFAULT 'psarc',
+                format TEXT DEFAULT 'archive',
                 stem_count INTEGER DEFAULT 0,
                 stem_ids TEXT DEFAULT '[]',
                 tuning_name TEXT DEFAULT '',
@@ -384,7 +384,7 @@ class MetadataDB:
         """)
         # Idempotent migrations for installs that predate each column.
         for ddl in (
-            "ALTER TABLE songs ADD COLUMN format TEXT DEFAULT 'psarc'",
+            "ALTER TABLE songs ADD COLUMN format TEXT DEFAULT 'archive'",
             "ALTER TABLE songs ADD COLUMN stem_count INTEGER DEFAULT 0",
             # slopsmith#129: per-stem filter needs the id list, not just count.
             "ALTER TABLE songs ADD COLUMN stem_ids TEXT DEFAULT '[]'",
@@ -1411,7 +1411,7 @@ class MetadataDB:
                 "year": row[5], "duration": row[6], "tuning": row[7],
                 "arrangements": json.loads(row[8]) if row[8] else [],
                 "has_lyrics": bool(row[9]),
-                "format": row[10] or "psarc",
+                "format": row[10] or "archive",
                 "stem_count": int(row[11] or 0),
                 "stem_ids": json.loads(row[12]) if row[12] else [],
                 "tuning_name": row[13] or "",
@@ -1431,7 +1431,7 @@ class MetadataDB:
                  meta.get("album", ""), meta.get("year", ""), meta.get("duration", 0),
                  meta.get("tuning", ""), json.dumps(meta.get("arrangements", [])),
                  1 if meta.get("has_lyrics") else 0,
-                 meta.get("format", "psarc"),
+                 meta.get("format", "archive"),
                  int(meta.get("stem_count", 0) or 0),
                  json.dumps(meta.get("stem_ids", []) or []),
                  meta.get("tuning_name", "") or "",
@@ -1706,7 +1706,7 @@ class MetadataDB:
             # magnitude tier we break ties by signed key ASC so the
             # negative (down-tuned) variant comes before the positive
             # (up-tuned) one — Eb Standard before F Standard, matching
-            # how Rocksmith groups its tuning list. Final tiebreak by
+            # how the app groups its tuning list. Final tiebreak by
             # name keeps the order fully deterministic.
             #
             # Leading term pushes pre-migration / unscanned rows to
@@ -1760,7 +1760,7 @@ class MetadataDB:
                 "year": r[4], "duration": r[5], "tuning": r[6],
                 "arrangements": _ensure_smart_names(json.loads(r[7]) if r[7] else []),
                 "has_lyrics": bool(r[8]), "mtime": r[9],
-                "format": r[10] or "psarc",
+                "format": r[10] or "archive",
                 "stem_count": int(r[11] or 0),
                 "stem_ids": json.loads(r[12]) if r[12] else [],
                 "tuning_name": r[13] or "",
@@ -1841,7 +1841,7 @@ class MetadataDB:
                 "year": r[4], "duration": r[5], "tuning": r[6],
                 "arrangements": _ensure_smart_names(json.loads(r[7]) if r[7] else []),
                 "has_lyrics": bool(r[8]),
-                "format": r[9] or "psarc",
+                "format": r[9] or "archive",
                 "stem_count": int(r[10] or 0),
                 "stem_ids": json.loads(r[11]) if r[11] else [],
                 "tuning_name": r[12] or "",
@@ -2667,7 +2667,7 @@ def _resolve_dlc_path(dlc: Path, filename: str) -> Path | None:
     """Resolve `filename` under DLC_DIR and refuse anything that escapes.
 
     `filename` arrives from `:path` route params and can contain `..`
-    segments. The Sloppak and PSARC paths happen to fail safely later
+    segments. The Sloppak and archive paths happen to fail safely later
     because their loaders raise on missing/invalid files, but loose-
     folder format detection (`is_loose_song`) globs and parses XML on
     disk first, which lets a crafted path trigger filesystem reads
@@ -2777,7 +2777,7 @@ def _stat_for_cache(f: Path) -> tuple[float, int]:
 
     For loose-folder directories the directory's own mtime does not
     change when inner files (audio.wem / *.xml / manifest.json) are
-    edited in place, so we aggregate over the contents. PSARCs and
+    edited in place, so we aggregate over the contents. archives and
     sloppak files (zip form) use their own stat directly. Sloppak
     *directories* are aggregated too: the editor and the library Edit
     button rewrite their `manifest.yaml` / `arrangements/*.json` in
@@ -2793,7 +2793,7 @@ def _stat_for_cache(f: Path) -> tuple[float, int]:
     # every cache lookup.
     if f.is_dir():
         # Skip symlinks pointing outside the song folder — without this
-        # an attacker-crafted CDLC could keep a stale cache hot by
+        # an attacker-crafted custom song could keep a stale cache hot by
         # bumping the mtime of an unrelated file via a symlink.
         root = f.resolve()
         def _in_folder(p: Path) -> bool:
@@ -3344,7 +3344,7 @@ async def startup_events():
         "get_dlc_dir": _get_dlc_dir,
         # Pass the DLC-root resolver (not its result) so loose-folder
         # metadata keeps its dlc-relative artist/album inference while the
-        # lookup stays lazy — PSARC/sloppak extraction never reads config.
+        # lookup stays lazy — archive/sloppak extraction never reads config.
         # Plugins still call this with just a path.
         "extract_meta": lambda p: _extract_meta_for_file(p, _get_dlc_dir),
         "meta_db": meta_db,
@@ -3888,7 +3888,7 @@ def _invalidate_song_caches(cache_key: str) -> None:
     """Drop filename-keyed derived caches when a song at ``cache_key`` is
     replaced or removed. Sloppak's ``_source_cache`` and loose-folder audio
     IDs self-invalidate via stat checks; the caches purged here do not."""
-    # In-memory PSARC extraction cache (filename → tmp dir + Song).
+    # In-memory archive extraction cache (filename → tmp dir + Song).
     with _extract_cache_lock:
         stale = _extract_cache.pop(cache_key, None)
     if stale:
@@ -3905,7 +3905,7 @@ def _invalidate_song_caches(cache_key: str) -> None:
     except OSError:
         log.debug("failed to evict art cache for %s", cache_key, exc_info=True)
 
-    # PSARC audio cache — audio_id is `Path(filename).stem.replace(" ", "_")`
+    # archive audio cache — audio_id is `Path(filename).stem.replace(" ", "_")`
     # without any stat digest, so a same-named replacement would serve the
     # previous file's converted audio. Loose-folder ids include a wem stat
     # digest and self-heal; sloppak streams stems directly and uses no
@@ -4271,7 +4271,7 @@ def _library_filter_args(q: str = "", favorites: int = 0, format: str = "",
                          arrangements_has: str = "", arrangements_lacks: str = "",
                          stems_has: str = "", stems_lacks: str = "",
                          has_lyrics: str = "", tunings: str = "") -> dict:
-    fmt = format if format in ("psarc", "sloppak", "loose") else ""
+    fmt = format if format in ("archive", "sloppak", "loose") else ""
     return {
         "q": q,
         "favorites_only": bool(favorites),
@@ -6312,17 +6312,17 @@ async def get_song_art(filename: str):
     if not dlc:
         return JSONResponse({"error": "not configured"}, 404)
 
-    psarc_path = _resolve_dlc_path(dlc, filename)
-    if psarc_path is None:
+    song_path = _resolve_dlc_path(dlc, filename)
+    if song_path is None:
         return JSONResponse({"error": "forbidden"}, 403)
-    if not psarc_path.exists():
+    if not song_path.exists():
         return JSONResponse({"error": "not found"}, 404)
 
     # Sloppak path: pull cover.jpg from the source dir (manifest-declared or default).
-    if sloppak_mod.is_sloppak(psarc_path):
+    if sloppak_mod.is_sloppak(song_path):
         try:
             src = sloppak_mod.resolve_source_dir(filename, dlc, SLOPPAK_CACHE_DIR)
-            manifest = sloppak_mod.load_manifest(psarc_path)
+            manifest = sloppak_mod.load_manifest(song_path)
             cover_rel = str(manifest.get("cover") or "cover.jpg")
             cover_path = (src / cover_rel).resolve()
             # Prevent escape and fall back to default name if missing.
@@ -6341,16 +6341,16 @@ async def get_song_art(filename: str):
         return JSONResponse({"error": "no art"}, 404)
 
     # Loose folder path: serve art file directly.
-    # psarc_path is already validated against DLC_DIR by _resolve_dlc_path.
-    if loosefolder_mod.is_loose_song(psarc_path):
-        art_path = loosefolder_mod.find_art(psarc_path)
+    # song_path is already validated against DLC_DIR by _resolve_dlc_path.
+    if loosefolder_mod.is_loose_song(song_path):
+        art_path = loosefolder_mod.find_art(song_path)
         if art_path:
             # Re-resolve in case the matched file is a symlink — a crafted
-            # CDLC could put `album_art.jpg` as a symlink to anywhere on
+            # custom song could put `album_art.jpg` as a symlink to anywhere on
             # disk. Insist the final target stays inside the song folder.
             art_resolved = art_path.resolve()
             try:
-                art_resolved.relative_to(psarc_path)
+                art_resolved.relative_to(song_path)
             except ValueError:
                 return JSONResponse({"error": "forbidden"}, 403)
             if art_resolved.is_file():
@@ -6377,7 +6377,7 @@ def update_song_meta(filename: str, data: dict):
     """Update song metadata, persisting it back into the underlying file.
 
     The library scanner re-derives title/artist/album/year from the file
-    (PSARC manifest Attributes / sloppak manifest.yaml) on every full rescan,
+    (archive manifest Attributes / sloppak manifest.yaml) on every full rescan,
     so a DB-only edit reverts. We write the edit into the file first, then
     refresh the cache row (including mtime/size) to match. Loose-folder and
     unwritable songs fall back to a DB-only update (which still survives an
@@ -6417,7 +6417,7 @@ def update_song_meta(filename: str, data: dict):
     # Hold _song_io_lock across the existence check and file write so a
     # concurrent delete cannot remove the file between our check and the
     # repack's atomic replace, and so a concurrent upload cannot be clobbered
-    # by our atomic rename. PSARC repack is slow — the lock is held longer
+    # by our atomic rename. archive repack is slow — the lock is held longer
     # than a simple upload/delete, but correctness requires serialisation.
     persisted = False
     with _song_io_lock:
@@ -6497,29 +6497,29 @@ async def get_song_info(filename: str):
     if not dlc:
         return JSONResponse({"error": "DLC folder not configured"}, 404)
 
-    psarc_path = _resolve_dlc_path(dlc, filename)
-    if psarc_path is None:
+    song_path = _resolve_dlc_path(dlc, filename)
+    if song_path is None:
         return JSONResponse({"error": "forbidden"}, 403)
-    if not psarc_path.exists():
+    if not song_path.exists():
         return JSONResponse({"error": "File not found"}, 404)
 
     # Canonicalise the cache key against the resolved path so two URL
-    # forms of the same physical file (e.g. `Artist/song.psarc` vs
-    # `Artist/../Artist/song.psarc`) converge on a single row instead
+    # forms of the same physical file (e.g. `Artist/song.sloppak` vs
+    # `Artist/../Artist/song.sloppak`) converge on a single row instead
     # of fragmenting / shadowing each other in meta_db.
     try:
-        cache_key = psarc_path.relative_to(dlc.resolve()).as_posix()
+        cache_key = song_path.relative_to(dlc.resolve()).as_posix()
     except ValueError:
         cache_key = filename
 
-    mtime, size = _stat_for_cache(psarc_path)
+    mtime, size = _stat_for_cache(song_path)
     cached = meta_db.get(cache_key, mtime, size)
     if cached:
         return cached
 
     # Extract in thread pool
     def _extract():
-        meta = _extract_meta_for_file(psarc_path, dlc)
+        meta = _extract_meta_for_file(song_path, dlc)
         meta_db.put(cache_key, mtime, size, meta)
         return meta
 
@@ -6608,23 +6608,23 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
         await websocket.close()
         return
 
-    psarc_path = _resolve_dlc_path(dlc, filename)
-    if psarc_path is None:
+    song_path = _resolve_dlc_path(dlc, filename)
+    if song_path is None:
         await websocket.send_json({"error": "forbidden"})
         await websocket.close()
         return
-    if not psarc_path.exists():
+    if not song_path.exists():
         await websocket.send_json({"error": "File not found"})
         await websocket.close()
         return
 
-    is_slop = sloppak_mod.is_sloppak(psarc_path)
+    is_slop = sloppak_mod.is_sloppak(song_path)
     # Sloppak wins precedence: `_extract_meta_for_file()` and the
     # background scanner both treat a `.sloppak` directory as sloppak
     # even if it happens to contain WEM/XML. Gate is_loose on that
     # so the loose-only branches (audio_id, offset, audio conversion)
     # don't fire for sloppak bundles.
-    is_loose = (not is_slop) and loosefolder_mod.is_loose_song(psarc_path)
+    is_loose = (not is_slop) and loosefolder_mod.is_loose_song(song_path)
     tmp = None
     owns_tmp = False
     loaded_slop = None  # LoadedSloppak when is_slop
@@ -6658,11 +6658,11 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             elif is_loose:
                 # Loose folders need no extraction — load_song reads the
                 # arrangement XMLs directly from the flat directory.
-                # psarc_path is already DLC-containment-validated by
+                # song_path is already DLC-containment-validated by
                 # _resolve_dlc_path, so audio conversion below can use
                 # it directly.
-                song = await loop.run_in_executor(None, lambda: load_song(str(psarc_path)))
-                tmp = str(psarc_path)
+                song = await loop.run_in_executor(None, lambda: load_song(str(song_path)))
+                tmp = str(song_path)
                 owns_tmp = False
             else:
                 # Only open formats (.sloppak bundles and loose folders) are
@@ -6735,13 +6735,13 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             #    collide (a `/`→`__` escape would collapse `a/b__c` and
             #    `a__b/c`);
             #  - editing audio.wem in place invalidates the cached
-            #    converted file (without this, in-place CDLC iteration
+            #    converted file (without this, in-place custom song iteration
             #    keeps serving the stale mp3/ogg from the cache).
             try:
-                canonical = psarc_path.relative_to(dlc.resolve()).as_posix()
+                canonical = song_path.relative_to(dlc.resolve()).as_posix()
             except ValueError:
                 canonical = filename
-            wem_for_id = loosefolder_mod.find_audio(psarc_path)
+            wem_for_id = loosefolder_mod.find_audio(song_path)
             try:
                 wem_stat = wem_for_id.stat() if wem_for_id else None
             except OSError:
@@ -6782,7 +6782,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
 
         def _evict_audio_cache():
             # Keep AUDIO_CACHE_DIR bounded so a library full of loose
-            # folders / many PSARCs doesn't fill disk. LRU on st_atime
+            # folders / many archives doesn't fill disk. LRU on st_atime
             # so songs the user keeps replaying stay warm. Best-effort:
             # log at debug so permission / disk errors are diagnosable
             # without aborting the request.
@@ -6798,15 +6798,15 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
 
         if not audio_url and is_loose:
             await websocket.send_json({"type": "loading", "stage": "Converting audio..."})
-            wem_path = loosefolder_mod.find_audio(psarc_path)
+            wem_path = loosefolder_mod.find_audio(song_path)
             if wem_path:
                 # Re-resolve to defeat a symlinked audio.wem that points
                 # outside the song folder — without this, a crafted
-                # CDLC could turn convert_wem into an arbitrary-file
+                # custom song could turn convert_wem into an arbitrary-file
                 # decode/read primitive.
                 wem_resolved = wem_path.resolve()
                 try:
-                    wem_resolved.relative_to(psarc_path)
+                    wem_resolved.relative_to(song_path)
                 except ValueError:
                     audio_error = "Audio file escapes the loose folder."
                     wem_resolved = None
@@ -6838,7 +6838,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             await websocket.send_json({"type": "loading", "stage": "Converting audio..."})
             wem_files = find_wem_files(tmp)
             if not wem_files:
-                audio_error = "No WEM audio files were found inside this PSARC."
+                audio_error = "No WEM audio files were found inside this archive."
             else:
                 try:
                     audio_path = convert_wem(wem_files[0], os.path.join(tmp, "audio"))
@@ -6880,7 +6880,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             "audio_error": audio_error,
             "tuning": arr.tuning,
             # Number of strings on the active arrangement
-            # (slopsmith-plugin-3dhighway#7). RS XML / PSARC sources
+            # (slopsmith-plugin-3dhighway#7). arrangement XML / archive sources
             # always emit `tuning` as length 6 with zero-padding for
             # unused string slots, so `len(arr.tuning)` is unreliable
             # there; sloppak / GP-imported sources may instead carry
@@ -6899,7 +6899,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             # would serialise as the literal `NaN` token (invalid JSON)
             # and break the frontend's song_info parsing.
             "offset": _sanitized_song_offset(song) if is_loose else 0.0,
-            "format": "sloppak" if is_slop else ("loose" if is_loose else "psarc"),
+            "format": "sloppak" if is_slop else ("loose" if is_loose else "archive"),
             "stems": stems_payload,
             # Surface a drum_tab presence flag so the visualization picker
             # can auto-activate the drums plugin even when the chosen
@@ -6991,7 +6991,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
 
         # Send chord templates. Include `fingers` alongside `name` /
         # `frets` so plugin overlays consuming highway.getChordTemplates()
-        # can render full chord boxes (Rocksmith-style fingering
+        # can render full chord boxes (chord-style fingering
         # diagrams), not just chord names. Each fingering entry is
         # per-string: -1 = unused, 0 = open string, n > 0 = finger
         # number. RS XML sources populate real values; GP imports
@@ -7005,7 +7005,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
         lyrics_source = ""
         # Loose folders are flat — only inspect direct children so a
         # nested backup/export directory inside the song folder can't
-        # override the active arrangement's lyrics / tone. PSARCs are
+        # override the active arrangement's lyrics / tone. archives are
         # unpacked into nested tmp dirs, so they keep recursive rglob.
         # Sloppak skips XML lookups entirely below but the json loop
         # is unconditional, so define both walkers up front.
@@ -7044,7 +7044,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
                 payload["source"] = lyrics_source
             await websocket.send_json(payload)
 
-        # Send tone changes. PSARC and loose folders carry tone data in
+        # Send tone changes. archive and loose folders carry tone data in
         # arrangement XMLs; a sloppak ships it inline in its arrangement JSON
         # (Arrangement.tones, populated by the converter), so read it straight
         # off `arr` rather than walking for XML that doesn't exist.
@@ -7124,7 +7124,7 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
                     break
 
             # Parse XMLs. Prefer the XML paired with the matched manifest
-            # (identical stem). When no manifest matched (loose/CDLC), fall
+            # (identical stem). When no manifest matched (loose/custom song), fall
             # back to a name-token match — but rank by how few *extra* stem
             # tokens a candidate carries, mirroring lib/tones.py: {"lead"} is
             # a subset of both `song_lead` and `song_bonus_lead`, so a plain
@@ -7133,8 +7133,8 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             # `_token_ambiguous` then suppresses the rank-2 best-effort
             # fallback, so no arrangement's tone timeline is guessed at
             # (matching lib/tones.py, which attaches nothing on a tie).
-            # Shared tokenizer with lib/tones.py so PSARC playback and
-            # PSARC→sloppak conversion select arrangement XMLs identically.
+            # Shared tokenizer with lib/tones.py so archive playback and
+            # archive→sloppak conversion select arrangement XMLs identically.
             from tones import tokens as _name_tokens
             _arr_tokens = _name_tokens(arr.name) if arr else set()
             _token_pick = None
@@ -7165,13 +7165,13 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             # that XML — a rank-2 fallback XML belongs to another
             # arrangement. A token tie is likewise suppressed (guessing among
             # equally-named XMLs would be wrong). Only a genuine no-match
-            # case (loose/CDLC with no usable manifest and no name overlap)
+            # case (loose/custom song with no usable manifest and no name overlap)
             # keeps the long-standing rank-2 best-effort source.
             _suppress_fallback = (
                 matched_stem is not None or _token_pick is not None or _token_ambiguous
             )
             sent_tones = False
-            psarc_base = ""  # <tonebase> of the preferred arrangement XML
+            tone_base = ""  # <tonebase> of the preferred arrangement XML
             for xml_path in sorted_xml:
                 try:
                     root = ET.parse(xml_path).getroot()
@@ -7185,13 +7185,13 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
                     # rank-2 XMLs whenever a match was confirmed; in the
                     # genuine no-match case rank-2 IS the best-effort source,
                     # so its <tonebase> is equally valid for a base-only song.
-                    if not psarc_base:
+                    if not tone_base:
                         _tb = root.find("tonebase")
                         if _tb is not None and _tb.text:
                             # Strip whitespace from pretty-printed XML so the
                             # base name matches the sloppak path, which also
                             # strips it.
-                            psarc_base = _tb.text.strip()
+                            tone_base = _tb.text.strip()
                     tones_el = root.find("tones")
                     if tones_el is not None:
                         # Accumulate into a per-XML list — if this file
@@ -7254,14 +7254,14 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1,
             # Base-only fallback: a single-tone arrangement has a <tonebase>
             # but no <tones> markers — still surface the initial tone so the
             # highway can show it (parity with the sloppak path above).
-            # `psarc_base` is the <tonebase> of whichever XML the loop
+            # `tone_base` is the <tonebase> of whichever XML the loop
             # accepted: the confirmed-match XML, or — in the genuine no-match
             # case — the best-effort rank-2 XML. `arr_tone_names` holds the
             # selected arrangement's own Tone_A..D. An ambiguous arrangement
             # (token tie) accepts no XML and has no manifest map, so it
             # correctly sends nothing rather than a guessed tone.
             if not sent_tones:
-                base_name = psarc_base
+                base_name = tone_base
                 if not base_name:
                     base_name = arr_tone_names.get(0, "")
                 if base_name:

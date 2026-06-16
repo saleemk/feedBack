@@ -49,7 +49,7 @@ test('reset counters via bindRuntime song lifecycle', () => {
     };
 
     const runtime = hud.bindRuntime(sm);
-    sm.emit('song:loading', { filename: 'song.psarc' });
+    sm.emit('song:loading', { filename: 'song.archive' });
     assert.equal(runtime.isActive(), true);
 
     runtime.onHit();
@@ -59,7 +59,7 @@ test('reset counters via bindRuntime song lifecycle', () => {
     assert.equal(runtime.getCounters().misses, 1);
     assert.equal(runtime.getCounters().streak, 0);
 
-    sm.emit('song:arrangement-changed', { filename: 'song.psarc', arrangement: 1 });
+    sm.emit('song:arrangement-changed', { filename: 'song.archive', arrangement: 1 });
     assert.deepEqual(runtime.getCounters(), { hits: 0, misses: 0, streak: 0, bestStreak: 0 });
 
     sm.emit('song:stop', { time: 12 });
@@ -103,7 +103,7 @@ test('DOM text updates after hit and miss events', () => {
     };
 
     const runtime = hud.bindRuntime(sm, els);
-    sm.emit('song:loading', { filename: 'song.psarc' });
+    sm.emit('song:loading', { filename: 'song.archive' });
 
     assert.equal(els.percent.textContent, '\u2014');
     assert.equal(els.hits.textContent, 'Waiting for notes');
@@ -140,7 +140,7 @@ test('HUD stays hidden until the first note arrives, then reveals', () => {
     };
 
     const runtime = hud.bindRuntime(sm, els);
-    sm.emit('song:loading', { filename: 'song.psarc' });
+    sm.emit('song:loading', { filename: 'song.archive' });
     // Primed (tallying) but not yet visible — a user without note detection
     // never gets note:hit/note:miss, so the HUD must not show on load alone.
     assert.equal(runtime.isActive(), true);
@@ -152,7 +152,7 @@ test('HUD stays hidden until the first note arrives, then reveals', () => {
     // A new song re-hides until the next note.
     sm.emit('song:stop', { time: 1 });
     assert.ok(els.root.className.includes('hidden'));
-    sm.emit('song:loading', { filename: 'song2.psarc' });
+    sm.emit('song:loading', { filename: 'song2.archive' });
     assert.ok(els.root.className.includes('hidden'));
 });
 

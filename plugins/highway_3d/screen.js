@@ -1099,7 +1099,7 @@
         return _bgBandsCache;
     }
 
-    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'rocksmith', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
+    const BG_DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
     // User-selectable, persistable bg styles — must mirror settings.html's
     // VALID_STYLES. 'venue' is deliberately NOT here: it is an internal effective
     // style reached only via _venueSceneOverride (the viz-picker Venue flow), so
@@ -1325,7 +1325,7 @@
             },
         );
     }
-    const FRET_NUMBER_GHOST_SCOPE_IDS = ['rocksmith', 'all'];
+    const FRET_NUMBER_GHOST_SCOPE_IDS = ['chords', 'all'];
 
     function _bgPanelKey(canvas) {
         const ss = window.slopsmithSplitscreen;
@@ -2717,7 +2717,7 @@
         // Fret digits on the board ghost (hollow preview at Z=0), not on
         // flying note bodies — see fretNumberGhostScope for chord-hand vs all.
         let showFretOnNote = false;
-        let fretNumberGhostScope = 'rocksmith';
+        let fretNumberGhostScope = 'chords';
         // Camera-X smoothing dial (issue #34). 0 = twitchy (track every
         // upcoming fret), 1 = calm (ignore small intra-cluster shifts).
         // Cached here and refreshed via the bg listener to avoid a
@@ -7546,7 +7546,7 @@
             const tol = 0.028;
             /**
              * Suppress a synth chord box when a real chord with the **same trimmed
-             * display name** played within this window — RS CDLC commonly authors
+             * display name** played within this window — Custom songs commonly authors
              * several ``<chordTemplate>`` rows that share a display name (with
              * trailing-whitespace IDs) for fingering variants. The follow-up
              * hand-shape with no chord row is a fingering hint, not a new strum
@@ -7558,7 +7558,7 @@
             const trimmedTemplateName = (cid) => {
                 if (cid == null || !chordTemplates) return '';
                 const tmpl = chordTemplates[cid] ?? chordTemplates[Number(cid)];
-                // CDLC commonly authors several <chordTemplate> rows that share
+                // custom songs commonly authors several <chordTemplate> rows that share
                 // a displayName for fingering variants; the suppression
                 // heuristic in the surrounding code dedupes on the *label*,
                 // not the underlying name, so go through chordTemplateLabel.
@@ -12363,13 +12363,13 @@
                 const ghostFretOk = showFretOnNote && (
                     arpGhostActive ||
                     fretNumberGhostScope === 'all' ||
-                    (fretNumberGhostScope === 'rocksmith' && fromChord)
+                    (fretNumberGhostScope === 'chords' && fromChord)
                 );
                 if (ghostFretOk && pGhostFretLbl) {
                     // chord-hand style → show finger number (1–4) from the chord
                     // template; fall back to fret number when no finger data exists
                     // (GP imports, open strings, non-chord notes).
-                    const ghostFretDisplay = fromChord && fretNumberGhostScope === 'rocksmith'
+                    const ghostFretDisplay = fromChord && fretNumberGhostScope === 'chords'
                         ? (_templateFingerForChordGhost(chordId, n.s) ?? _templateFretForChordGhost(chordId, n.s, n.f))
                         : fromChord
                             ? _templateFretForChordGhost(chordId, n.s, n.f)
@@ -12389,7 +12389,7 @@
                         // frame (projFactor), instead of popping in at full alpha.
                         ghostFretLblAlpha = projFactor;
                     }
-                    const _ghostFretForScale = fromChord && fretNumberGhostScope === 'rocksmith'
+                    const _ghostFretForScale = fromChord && fretNumberGhostScope === 'chords'
                         ? n.f
                         : ghostFretDisplay;
                     drawGhostFretLabel(x, y, projRim, ghostFretDisplay, ghostFretLblAlpha, projGrowScale, _ghostFretForScale);

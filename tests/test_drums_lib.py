@@ -126,7 +126,7 @@ def test_validate_drum_tab_rejects_non_int_version():
 
 def test_validate_drum_tab_accepts_unknown_version():
     """An unknown schema version is logged but the payload is still accepted —
-    forward-compat per Principle IV (backwards-compatible CDLC library)."""
+    forward-compat per Principle IV (backwards-compatible custom song library)."""
     ok, _ = drums.validate_drum_tab({"version": 99, "hits": []})
     assert ok
 

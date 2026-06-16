@@ -57,7 +57,7 @@ test('start requires a target and explicit user authorization for fresh audible 
 test('settings key is stable across arrangements while target id remains arrangement scoped', async () => {
     const window = loadPlayback();
     window.slopsmith.playback.registerTransportAdapter(makeAdapter());
-    const base = makeTarget({ filename: '/Users/example/DLC/Artist - Song_p.psarc', arrangement: 'Lead', arrangementIndex: 0 });
+    const base = makeTarget({ filename: '/Users/example/DLC/Artist - Song_p.archive', arrangement: 'Lead', arrangementIndex: 0 });
 
     await dispatch(window, 'start', { requesterId: 'core.player.controls', authorization: 'user-action', target: base });
     const leadTarget = diagnosticsSnapshot(window).state.target;

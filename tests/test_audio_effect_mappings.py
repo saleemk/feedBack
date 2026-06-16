@@ -24,7 +24,7 @@ def client(tmp_path, monkeypatch):
 def _post_mapping(client, **overrides):
     payload = {
         "song_key": "settings-v1-song",
-        "filename": "Artist - Song_p.psarc",
+        "filename": "Artist - Song_p.archive",
         "tone_key": "Dist",
         "provider_id": "nam-tone",
         "provider_ref": "preset:42",
@@ -80,7 +80,7 @@ def test_upsert_updates_provider_mapping_without_colliding_with_other_provider(c
     assert second["label"] == "Updated"
     assert rig["id"] != first["id"]
 
-    listed = client.get("/api/audio-effects/mappings", params={"filename": "Artist - Song_p.psarc"}).json()["mappings"]
+    listed = client.get("/api/audio-effects/mappings", params={"filename": "Artist - Song_p.archive"}).json()["mappings"]
     assert len(listed) == 2
 
 

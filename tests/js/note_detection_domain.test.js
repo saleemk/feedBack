@@ -172,7 +172,7 @@ test('diagnostics contribution is redaction-safe', async () => {
     const contribution = window.__diagnosticsContributions.get('note-detection-capability');
     assert.equal(contribution.schema, 'slopsmith.note_detection_capability.v1');
     const serialized = JSON.stringify(contribution);
-    assert.ok(!/Yamaha|deviceLabel|filename|\.sloppak|\.psarc/i.test(serialized), serialized);
+    assert.ok(!/Yamaha|deviceLabel|filename|\.sloppak|\.archive/i.test(serialized), serialized);
 });
 
 test('legacy setNoteStateProvider surface is wrapped and accounted', () => {
@@ -227,7 +227,7 @@ test('_contextSummary whitelists arrangement kind — unknown values are dropped
     // Arbitrary string must not appear in context summary.
     const open2 = await api.dispatch({
         capability: 'note-detection', command: 'open-binding',
-        source: 'caller', payload: { context: { arrangement: '/Users/victim/song.psarc' } },
+        source: 'caller', payload: { context: { arrangement: '/Users/victim/song.archive' } },
     });
     assert.equal(open2.outcome, 'handled');
     const snap2 = window.slopsmith.noteDetection.snapshot();

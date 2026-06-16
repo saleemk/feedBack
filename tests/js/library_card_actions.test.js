@@ -9,14 +9,14 @@ test('register + list returns applicable actions sorted by order', () => {
     freshIds();
     reg.register({ id: 'b', label: 'B', order: 20, run() {} });
     reg.register({ id: 'a', label: 'A', order: 10, run() {} });
-    const ids = reg.list({ filename: 'x.psarc' }).map((a) => a.id);
+    const ids = reg.list({ filename: 'x.archive' }).map((a) => a.id);
     assert.deepStrictEqual(ids, ['a', 'b']);
 });
 
 test('applies() filters out non-applicable actions', () => {
     freshIds();
     reg.register({ id: 'bassonly', label: 'Bass', applies: (s) => s.format === 'sloppak', run() {} });
-    assert.strictEqual(reg.list({ filename: 'x.psarc', format: 'psarc' }).length, 0);
+    assert.strictEqual(reg.list({ filename: 'x.archive', format: 'archive' }).length, 0);
     assert.strictEqual(reg.list({ filename: 'y.sloppak', format: 'sloppak' }).length, 1);
 });
 
@@ -33,10 +33,10 @@ test('run() invokes the handler and reports handled', async () => {
     freshIds();
     let got = null;
     reg.register({ id: 'go', label: 'Go', run: (song) => { got = song.filename; return 'done'; } });
-    const r = await reg.run('go', { filename: 'song.psarc' }, {});
+    const r = await reg.run('go', { filename: 'song.archive' }, {});
     assert.strictEqual(r.ok, true);
     assert.strictEqual(r.outcome, 'handled');
-    assert.strictEqual(got, 'song.psarc');
+    assert.strictEqual(got, 'song.archive');
 });
 
 test('run() of a disabled / non-applicable / unknown action does not throw', async () => {

@@ -70,7 +70,7 @@ test('player arrangement pin saves the selected arrangement name', async ({ page
     select.value = '2';
     // @ts-ignore - browser app namespace
     window.slopsmith.currentSong = {
-      filename: 'demo.psarc',
+      filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,
@@ -138,7 +138,7 @@ test('player arrangement pin preserves non-built-in arrangement names', async ({
     select.value = '2';
     // @ts-ignore - browser app namespace
     window.slopsmith.currentSong = {
-      filename: 'demo.psarc',
+      filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,
@@ -192,7 +192,7 @@ test('failed settings save does not mark arrangement default as persisted', asyn
     select.value = '2';
     // @ts-ignore - browser app namespace
     window.slopsmith.currentSong = {
-      filename: 'demo.psarc',
+      filename: 'demo.archive',
       arrangement: 'Rhythm',
       arrangementIndex: 2,
       arrangements,

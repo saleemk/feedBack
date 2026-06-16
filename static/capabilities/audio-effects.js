@@ -102,7 +102,7 @@
             .replace(/https?:\/\/[^\s?#]+[^\s]*/gi, '[url]')
             .replace(/file:\/\/[^\s]+/gi, '[path]')
             .replace(/\b(token|secret|password|api[_-]?key|key)=([^\s&]+)/gi, '$1=[redacted]')
-            .replace(/\b[^\s]+\.(psarc|sloppak|wem|ogg|mp3|wav|flac|nam|vst3|component|dll|json|db)\b/gi, '[file]')
+            .replace(/\b[^\s]+\.(archive|sloppak|wem|ogg|mp3|wav|flac|nam|vst3|component|dll|json|db)\b/gi, '[file]')
             .replace(/\b(raw[-_ ]?audio|audio[-_ ]?buffer|sample[s]?|waveform[s]?|recording[s]?|native[-_ ]?preset|model[-_ ]?file|ir[-_ ]?file|vst[-_ ]?state)\b/gi, '[private]');
     }
 

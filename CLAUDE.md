@@ -102,8 +102,8 @@ The fix is `context["load_sibling"](name)`, which loads the sibling under a name
 
 ```python
 def setup(app, context):
-    extractor = context["load_sibling"]("extractor")
-    PsarcReader = extractor.PsarcReader
+    helper = context["load_sibling"]("helper")
+    HelperClass = helper.HelperClass
     # …
 ```
 
@@ -340,9 +340,9 @@ Plugins that add a layer on top of whichever visualization is active — HUDs, f
 - `highway.hasPhraseData()` — returns `true` when the current song has phrase-level difficulty ladder data (i.e. the mastery slider is active and `getFilteredNotes()` / `getFilteredChords()` return a filtered subset). Use this to gate logic that only makes sense when difficulty filtering is available
 - `highway.getPhrases()` — phrase timing windows `[{ index, start_time, end_time, max_difficulty }]` for the current song's difficulty ladder. Returns `null` when phrase data is absent (GP imports, single-difficulty charts). Read-only; do not mutate. Pair with `hasPhraseData()` to gate phrase-aware logic.
 - `highway.getMastery()` — current master-difficulty slider value as a fraction `0..1`. Reflects the same value the mastery slider is set to; meaningful only when `hasPhraseData()` is true.
-- `highway.getChordTemplates()` — chord shape lookup table; index by `chord.id` from `getChords()` to get `{ name, fingers, frets }`. `fingers` and `frets` are per-string arrays (length matches the tuning's string count); within `fingers`, `-1` = unused, `0` = open string, `n > 0` = finger number. RS XML sources populate real fingerings; GP imports currently emit all `-1` since pre-import sources don't carry finger data. Not filter-aware: templates are static metadata, every `chord_id` referenced by `getChords()` is guaranteed valid
+- `highway.getChordTemplates()` — chord shape lookup table; index by `chord.id` from `getChords()` to get `{ name, fingers, frets }`. `fingers` and `frets` are per-string arrays (length matches the tuning's string count); within `fingers`, `-1` = unused, `0` = open string, `n > 0` = finger number. arrangement XML sources populate real fingerings; GP imports currently emit all `-1` since pre-import sources don't carry finger data. Not filter-aware: templates are static metadata, every `chord_id` referenced by `getChords()` is guaranteed valid
 - `highway.getSongInfo()` — tuning, arrangement, capo
-- `highway.getStringCount()` — number of strings on the active arrangement (4 for bass, 6 for guitar, 7+ for extended-range GP imports). Derived server-side as `max(notes-max-string + 1, name-based fallback, len(tuning))` where the tuning length only contributes when it isn't the RS-XML padded 6-string form (sloppak / GP-imported sources carry trimmed tuning lengths). The name-based fallback is 4 for arrangements containing "bass" (case-insensitive) and 6 otherwise. This combination handles partial-string-usage charts (a 6-string lead that never plays string 5), extended-range GP imports (5-string bass, 7-string guitar), and sloppaks that explicitly encode the instrument range — without requiring plugins to do their own arrangement-name matching
+- `highway.getStringCount()` — number of strings on the active arrangement (4 for bass, 6 for guitar, 7+ for extended-range GP imports). Derived server-side as `max(notes-max-string + 1, name-based fallback, len(tuning))` where the tuning length only contributes when it isn't the arrangement XML padded 6-string form (sloppak / GP-imported sources carry trimmed tuning lengths). The name-based fallback is 4 for arrangements containing "bass" (case-insensitive) and 6 otherwise. This combination handles partial-string-usage charts (a 6-string lead that never plays string 5), extended-range GP imports (5-string bass, 7-string guitar), and sloppaks that explicitly encode the instrument range — without requiring plugins to do their own arrangement-name matching
 - `highway.getLefty()` / `highway.getInverted()` — mirror + invert state
 
 Overlays do NOT appear in the viz picker and do NOT declare `"type": "visualization"` in `plugin.json`. They coexist with whichever renderer (default 2D, 3D highway, piano, ...) the user has picked.

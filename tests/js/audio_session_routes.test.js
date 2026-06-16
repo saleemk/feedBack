@@ -111,10 +111,10 @@ test('audio-input selection and registered providers survive song session switch
     const open = await api.dispatch({ capability: 'audio-input', command: 'open-source', source: 'note_detect', payload: { requesterId: 'note_detect', requiredChannelShape: 'mono' } });
     assert.equal(open.outcome, 'handled');
 
-    const next = audioSession.startSession({ sessionId: 'main:second-song', songKey: 'second-song.psarc', songFormat: 'psarc' });
+    const next = audioSession.startSession({ sessionId: 'main:second-song', songKey: 'second-song.archive', songFormat: 'archive' });
     const listed = await api.dispatch({ capability: 'audio-input', command: 'list-sources', source: 'note_detect' });
 
-    assert.equal(next.session.songFormat, 'psarc');
+    assert.equal(next.session.songFormat, 'archive');
     assert.equal(next.domains['audio-input'].selected.logicalSourceKey, 'switch:instrument:primary');
     assert.equal(next.domains['audio-input'].totalOpenSessions, 0);
     assert.equal(listed.payload.sources.some(source => source.logicalSourceKey === 'switch:instrument:primary'), true);

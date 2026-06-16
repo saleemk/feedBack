@@ -817,7 +817,7 @@ test('mapping helpers call core mapping API with provider-tagged payloads', asyn
 
     const saved = await window.slopsmith.audioEffects.upsertMapping({
         song_key: 'settings-v1-song',
-        filename: 'Artist - Song_p.psarc',
+        filename: 'Artist - Song_p.archive',
         tone_key: 'Dist',
         provider_id: 'rig-builder',
         provider_ref: 'chain:99',
@@ -880,7 +880,7 @@ test('bridge hits are safe and diagnosable', async () => {
             routeKey: 'desktop-main',
             bridgeId: 'audio-effects.legacy-nam-routing',
             pluginId: 'rig_builder',
-            legacySurface: 'fetch /Users/example/song.psarc token=abc123',
+            legacySurface: 'fetch /Users/example/song.archive token=abc123',
         },
     });
     const dbResult = await api.dispatch({

@@ -172,7 +172,7 @@ test('new song load resets the HTML audio rate, not only the visible speed contr
     const sandbox = buildSandbox();
     loadPlaySong(sandbox);
 
-    await sandbox.__playSong('next-song.psarc');
+    await sandbox.__playSong('next-song.archive');
 
     assert.equal(sandbox.__elements.get('speed-slider').value, 100);
     assert.match(sandbox.__elements.get('speed-label').textContent, /^1\.0{1,2}x$/);
@@ -184,7 +184,7 @@ test('new song load resets the desktop backing rate when the API is available', 
     const sandbox = buildSandbox({ juceMode: true });
     loadPlaySong(sandbox);
 
-    await sandbox.__playSong('next-song.psarc');
+    await sandbox.__playSong('next-song.archive');
     await new Promise((resolve) => setImmediate(resolve));
 
     assert.equal(sandbox.jucePlayer._speed, 1);

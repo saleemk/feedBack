@@ -133,7 +133,7 @@ def test_int_optional_falls_back_on_overflow():
 def test_parse_note_falls_back_to_default_on_malformed_numeric_attrs():
     """Malformed numeric XML attributes degrade gracefully.
 
-    Third-party Rocksmith XML occasionally emits empty / non-numeric
+    Third-party the source game XML occasionally emits empty / non-numeric
     values for fields like `rightHand`. `_int_optional` (used for
     optional metadata fields like `rightHand` and `pickDirection`)
     falls back to the caller's default instead of raising, so a
@@ -442,7 +442,7 @@ def test_arrangement_from_wire_ignores_non_dict_tones():
 
 
 def test_arrangement_tones_wire_is_json_safe():
-    # `definitions` is copied verbatim from the PSARC manifest — the wire
+    # `definitions` is copied verbatim from the archive manifest — the wire
     # output must still be strict JSON (allow_nan=False, as the browser's
     # JSON.parse requires).
     arr = Arrangement(name="Lead", tones={
@@ -754,14 +754,14 @@ def test_string_count_uses_tuning_length_for_sparse_7_string_guitar():
 
 
 def test_string_count_ignores_rs_padded_tuning_for_bass():
-    # RS-XML bass: tuning is padded to length 6 with zeros at
+    # arrangement XML bass: tuning is padded to length 6 with zeros at
     # indices 4-5. Even though len(tuning) == 6, we MUST NOT use
     # that as a 6-string signal (would mis-classify bass as
     # guitar). arrangement_string_count's `tuning_count = 0 if
     # tuning_len == 6 else tuning_len` rule takes care of this.
     arr = Arrangement(
         name="Bass",
-        tuning=[0, -5, -10, -15, 0, 0],  # bass with RS XML padding
+        tuning=[0, -5, -10, -15, 0, 0],  # bass with arrangement XML padding
         notes=[Note(time=float(i), string=i, fret=0) for i in range(4)],
     )
     assert arrangement_string_count(arr) == 4
@@ -852,7 +852,7 @@ def test_smart_names_unknown_name_returns_none():
 
 
 def test_smart_names_name_fallback_when_path_flags_zero():
-    # CDLC often leaves path flags at 0; fall back to arrangement name
+    # custom song often leaves path flags at 0; fall back to arrangement name
     arrs = [_sarr(name="Lead"), _sarr(name="Rhythm"), _sarr(name="Bass")]
     assert compute_smart_names(arrs) == ["Lead", "Rhythm", "Bass"]
 
@@ -883,7 +883,7 @@ def test_smart_names_multiple_combos_get_alt_names():
 
 
 def test_smart_names_combo_and_bass_mixed():
-    # Real-world CDLC: 3 Combo + 1 Bass, all path flags zero
+    # Real-world custom song: 3 Combo + 1 Bass, all path flags zero
     arrs = [
         _sarr(name="Combo"),
         _sarr(name="Combo"),

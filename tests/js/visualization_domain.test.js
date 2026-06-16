@@ -240,7 +240,7 @@ test('diagnostics contribution is redaction-safe (no song identity)', () => {
     const contribution = window.__diagnosticsContributions.get('visualization-capability');
     assert.equal(contribution.schema, 'slopsmith.visualization_capability.v1');
     const serialized = JSON.stringify(contribution);
-    assert.ok(!/filename|title|artist|\.sloppak|\.psarc/i.test(serialized), serialized);
+    assert.ok(!/filename|title|artist|\.sloppak|\.archive/i.test(serialized), serialized);
     assert.deepEqual(
         JSON.parse(JSON.stringify(contribution.lastAutoMatch)),
         { resolved: 'piano', matched: true },

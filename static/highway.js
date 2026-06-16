@@ -3259,7 +3259,7 @@ function createHighway() {
                         case 'chord_templates': chordTemplates = msg.data; break;
                         case 'lyrics':
                             lyrics = msg.data;
-                            // Provenance: "xml" | "sng" | "whisperx" | "user".
+                            // Provenance: "xml" | "notechart" | "whisperx" | "user".
                             // Surfaced via the renderer bundle so visualization
                             // plugins can render an "auto-transcribed" badge
                             // (or any other source-dependent UI) without
@@ -3494,7 +3494,7 @@ function createHighway() {
         //   - name:    chord name string ("Em", "Cmaj7", …)
         //   - fingers: per-string finger numbers (length matches
         //              the tuning's string count; -1 = unused, 0 =
-        //              open string, n > 0 = finger number). RS XML
+        //              open string, n > 0 = finger number). arrangement XML
         //              sources populate real values; GP imports
         //              currently emit all -1.
         //   - frets:   per-string fret numbers, same indexing.
@@ -3608,7 +3608,7 @@ function createHighway() {
         getLyricsVisible() { return showLyrics; },
         // Provenance of the active lyric set. See `lyricsSource` declaration
         // for the full enum. Plugins consume this to badge auto-transcribed
-        // (whisperx) lyrics differently from authored (xml/sng/user) ones.
+        // (whisperx) lyrics differently from authored (xml/notechart/user) ones.
         getLyricsSource() { return lyricsSource; },
         setLyricsVisible(v) {
             showLyrics = !!v;

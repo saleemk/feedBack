@@ -430,7 +430,7 @@
         <div id="h3d-fret-ghost-scope-wrap" class="ml-6 mt-2 space-y-2 border-l border-gray-700 pl-3">
             <p class="text-xs font-medium text-gray-400">Where to show</p>
             <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-                <input type="radio" name="h3d-fret-ghost-scope" id="h3d-fret-ghost-scope-rocksmith" value="rocksmith"
+                <input type="radio" name="h3d-fret-ghost-scope" id="h3d-fret-ghost-scope-chords" value="chords"
                        class="accent-accent">
                 In chords &amp; arpeggios (chord-hand events only)
             </label>
@@ -712,14 +712,14 @@
          no-selection / NaN state. -->
     <script>
         (function () {
-            const DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'rocksmith', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
+            const DEFAULTS = { style: 'particles', intensity: 0.5, reactive: true, palette: 'default', showFretOnNote: true, fretNumberGhostScope: 'chords', cameraSmoothing: 0.5, zoomSmoothing: 0.5, tiltSmoothing: 0.5, cameraLockLow: false, cameraLockZoom: 0.5, cameraMode: 'lookahead', nutHeadstockVisible: true, tuningLabelsVisible: true, nutColor: '#f5f3f0', headstockColor: '#d4b48a', textSize: 0.5, vibrancy: 0.85, glow: 0.25, customImageDataUrl: '', customImageName: '', customVideoName: '', chordDiagramVisible: true, chordDiagramSize: 0.5, chordDiagramPosition: 'tl', fretColumnMarkerCadence: 1, projectionVisible: true, inlayLabelsVisible: false, sectionLabelsOnHighway: false, sectionHudVisible: false, sectionHudPosition: 'tr', sectionHudSize: 0.5, toneHudVisible: false, toneHudPosition: 'tl', toneHudSize: 0.5, fpsVisible: false, fretDividersVisible: true, slideArrowApproachVisible: true, slideArrowNeckVisible: true, slideArrowChainPreviewVisible: true };
             const VALID_STYLES = new Set(['off', 'particles', 'silhouettes', 'lights', 'geometric', 'image', 'video']);
             const VALID_CAMERA_MODES = new Set(['steady', 'lookahead']);
             // Chord diagram is top-only (bl/br removed).
             const VALID_CHORD_DIAG_POSITIONS = new Set(['tl', 'tr']);
             // Section HUD still supports all four corners independently.
             const VALID_SECTION_HUD_POSITIONS = new Set(['tl', 'tr', 'bl', 'br']);
-            const VALID_FRET_GHOST_SCOPES = new Set(['rocksmith', 'all']);
+            const VALID_FRET_GHOST_SCOPES = new Set(['chords', 'all']);
             // Custom images are persisted as base64 data URLs in
             // localStorage. base64 expands the byte count by ~4/3, and
             // localStorage values are stored as UTF-16 (two bytes per
@@ -1015,7 +1015,7 @@
             if (lbl) lbl.textContent = intensity.toFixed(2);
             if (rea) rea.checked = reactive;
             if (fon) fon.checked = showFretOnNote;
-            const fgsRock = document.getElementById('h3d-fret-ghost-scope-rocksmith');
+            const fgsRock = document.getElementById('h3d-fret-ghost-scope-chords');
             const fgsAll = document.getElementById('h3d-fret-ghost-scope-all');
             const fgsWrap = document.getElementById('h3d-fret-ghost-scope-wrap');
             if (fretNumberGhostScope === 'all') { if (fgsAll) fgsAll.checked = true; }

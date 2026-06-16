@@ -1254,7 +1254,7 @@ function _libraryDisplayFilename(song, providerId) {
 
 function _librarySongTitle(song, providerId) {
     const fallback = _libraryDisplayFilename(song, providerId);
-    return song.title || fallback.replace(/_p\.psarc$/i, '').replace(/_/g, ' ');
+    return song.title || fallback.replace(/_p\.archive$/i, '').replace(/_/g, ' ');
 }
 
 function _librarySongArtUrl(song, providerId) {
@@ -9571,7 +9571,7 @@ async function pollScanStatus() {
             if (bar) bar.style.width = pct + '%';
             if (prog) prog.textContent = `${data.done} / ${data.total} (${pct}%)`;
             if (file) {
-                const name = (data.current || '').replace(/_p\.psarc$/i, '').replace(/_/g, ' ');
+                const name = (data.current || '').replace(/_p\.archive$/i, '').replace(/_/g, ' ');
                 file.textContent = name || (data.stage === 'listing' ? 'Listing DLC folder...' : 'Processing...');
             }
             if (firstNote) firstNote.classList.toggle('hidden', !data.is_first_scan);

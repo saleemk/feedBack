@@ -526,7 +526,7 @@ def load_song(
                     and isinstance(e.get("d"), (int, float))
                 ]
                 if song.lyrics:
-                    # Provenance — populated by the converter (xml/sng),
+                    # Provenance — populated by the converter (xml/notechart),
                     # the WhisperX fallback (whisperx), or hand-edits
                     # (user). Validate against the closed enum so a
                     # hand-edited (or otherwise malformed) manifest can't
@@ -536,8 +536,13 @@ def load_song(
                     # the wrong type) falls back to "xml" — the spec's
                     # back-compat default — instead of being stringified
                     # and trusted.
-                    _ALLOWED_LYRICS_SOURCES = {"xml", "sng", "whisperx", "user"}
+                    _ALLOWED_LYRICS_SOURCES = {"xml", "notechart", "whisperx", "user"}
+                    # Legacy alias: older manifests labelled note-chart-derived
+                    # lyrics with the source format's name; normalise it.
+                    _LYRICS_SOURCE_ALIASES = {"notechart": "notechart"}
                     raw_source = manifest.get("lyrics_source")
+                    if isinstance(raw_source, str):
+                        raw_source = _LYRICS_SOURCE_ALIASES.get(raw_source, raw_source)
                     if isinstance(raw_source, str) and raw_source in _ALLOWED_LYRICS_SOURCES:
                         song.lyrics_source = raw_source
                     else:
@@ -615,7 +620,7 @@ def extract_meta(path: Path) -> dict:
                 "notes": 0,  # unknown without loading; fine for the index
             }
         )
-    # Sort like PSARC path: Lead > Combo > Rhythm > Bass
+    # Sort like archive path: Lead > Combo > Rhythm > Bass
     priority = {"Lead": 0, "Combo": 1, "Rhythm": 2, "Bass": 3}
     arrangements.sort(key=lambda a: priority.get(a["name"], 99))
     for i, a in enumerate(arrangements):

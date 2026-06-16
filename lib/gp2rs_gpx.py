@@ -663,7 +663,7 @@ def list_tracks(gp_path: str) -> list[dict]:
 
 # ---------------------------------------------------------------------------
 # convert_file — mirrors gp2rs.convert_file interface
-# Converts GPX tracks directly to Rocksmith XML, reusing gp2rs._build_xml
+# Converts GPX tracks directly to the source game XML, reusing gp2rs._build_xml
 # ---------------------------------------------------------------------------
 
 
@@ -816,7 +816,7 @@ def _collect_tone_events(
 
 def _inject_tones(xml_str: str, tone_events: list[tuple[float, str]]) -> str:
     """
-    Inject a <tones> element into a Rocksmith arrangement XML string.
+    Inject a <tones> element into a the source game arrangement XML string.
 
     Parses the prettified XML returned by _build_xml, inserts the tones
     block before </song>, and re-serialises. Noop if tone_events is empty.
@@ -903,7 +903,7 @@ def convert_vocal_track_to_pitch_sidecar(
 
         {"version": 1, "notes": [{"t": float, "d": float, "midi": int}, ...]}
 
-    This is complementary to convert_vocal_track() which produces RS XML.
+    This is complementary to convert_vocal_track() which produces arrangement XML.
     NOTE: nothing in this module calls this helper yet — convert_file() does not
     invoke it, so no vocal_pitch.json is emitted automatically. A caller wanting
     the pitch ribbon must call this itself and persist the returned dict (e.g.
@@ -1124,7 +1124,7 @@ def convert_file(
     *,
     expand_repeats: bool = True,
 ) -> list[str]:
-    """Convert a .gpx file to Rocksmith XML arrangement files.
+    """Convert a .gpx file to the source game XML arrangement files.
 
     Mirrors gp2rs.convert_file so the editor plugin can call it transparently.
     expand_repeats is accepted for API compatibility but repeat expansion from
@@ -1758,7 +1758,7 @@ def convert_file(
         # (`<stem>.notation.json`, sloppak-spec §5.3) so the sloppak assembly
         # step can attach a `notation_<id>.json` + manifest `notation:`
         # sub-key without re-walking the GP file. Best-effort: a notation bug
-        # must never break the RS-XML conversion itself.
+        # must never break the arrangement XML conversion itself.
         if is_keys:
             try:
                 import gp2notation as _gp2notation
@@ -1809,10 +1809,10 @@ def _is_vocal_track(track: dict) -> bool:
 
 def _gpx_lyric_to_rs(raw: str) -> str:
     """
-    Convert a GPX lyric token to Rocksmith vocal lyric format.
+    Convert a GPX lyric token to the source game vocal lyric format.
 
     GPX encodes syllable continuation with a trailing hyphen (e.g. "in-", "t-").
-    Rocksmith uses the same convention for mid-word syllables.  For word-final
+    the source game uses the same convention for mid-word syllables.  For word-final
     syllables with no hyphen, RS requires a "+" suffix to signal "connect to
     next syllable without a space" — but only when the next beat is a
     continuation of the same word.  We handle this at the sequence level in
@@ -1849,7 +1849,7 @@ def convert_vocal_track(
     arr_name: str = 'Vocals',
 ) -> str:
     """
-    Convert a GPX vocal track to a Rocksmith 2014 vocals arrangement XML.
+    Convert a GPX vocal track to a the source game vocals arrangement XML.
 
     Each beat with a lyric and a note becomes a <vocal> element:
         time   — seconds from song start + audio_offset
@@ -1864,7 +1864,7 @@ def convert_vocal_track(
     Beats with a lyric but no pitch note are included as pitch-0 rests so the
     display timeline stays intact.  Beats with no lyric are skipped entirely.
 
-    The output is a minimal but valid Rocksmith vocals XML.  It does not include
+    The output is a minimal but valid the source game vocals XML.  It does not include
     ebeats or phrases (RS parses vocal XMLs without them).
     """
     string_pitches = track['string_pitches']  # high→low, standard guitar if vocal
@@ -2018,10 +2018,10 @@ def _build_vocals_xml(
     vocals: list[dict],
     tempo: int,
 ) -> str:
-    """Build a Rocksmith 2014 vocals arrangement XML string."""
+    """Build a the source game vocals arrangement XML string."""
     from xml.dom import minidom
 
-    # Rocksmith 2014 vocals arrangement is a flat <vocals> document — NOT a
+    # the source game vocals arrangement is a flat <vocals> document — NOT a
     # <song> wrapper. Every lyric consumer in the codebase keys off the root
     # tag being literally "vocals" (lib/loosefolder.py, server.py highway
     # loader), so a <song> root would be silently skipped and the generated

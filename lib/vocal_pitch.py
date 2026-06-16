@@ -2,7 +2,7 @@
 
 Sibling to `lyrics_transcribe.py` on the karaoke side: once we have
 isolated vocals + per-syllable lyric timing (both produced by the
-WhisperX fallback or shipped in the source PSARC), the /pitch endpoint
+WhisperX fallback or shipped in the source archive), the /pitch endpoint
 runs CREPE over the vocals stem and returns one MIDI note per supplied
 timing token. The result lands in `<sloppak>/vocal_pitch.json` in the
 shape the byrongamatos/slopsmith-plugin-lyrics-karaoke renderer

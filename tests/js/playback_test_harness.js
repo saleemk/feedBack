@@ -41,12 +41,12 @@ function dispatch(window, command, payload = {}, requester = 'test') {
 
 function makeTarget(overrides = {}) {
     return {
-        filename: overrides.filename || '/Users/example/DLC/Secret Artist - Song_p.psarc',
+        filename: overrides.filename || '/Users/example/DLC/Secret Artist - Song_p.archive',
         title: overrides.title || 'Visible Title',
         artist: overrides.artist || 'Visible Artist',
         arrangement: overrides.arrangement || 'Lead',
         arrangementIndex: overrides.arrangementIndex ?? 0,
-        format: overrides.format || 'psarc',
+        format: overrides.format || 'archive',
         sourceKind: overrides.sourceKind || 'local',
         ...overrides,
     };

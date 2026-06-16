@@ -10,7 +10,7 @@ need the model:
 * `vocals_has_signal` — RMS gate over a synthesized WAV.
 * `whisperx_available` — graceful False when the package isn't installed.
 
-The end-to-end positive case (PSARC without lyrics → sloppak with
+The end-to-end positive case (archive without lyrics → sloppak with
 auto-transcribed lyrics) is intentionally a manual verification step;
 see the plan's verification section.
 """

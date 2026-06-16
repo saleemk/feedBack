@@ -205,7 +205,7 @@ test('re-registering a mix participant without handlers preserves the existing s
     // every song load and re-registers core.song WITHOUT get/set handlers.
     // registerMixParticipant replaces the participant, so before the fix this
     // wiped the fader.set-value handler installed at init — the mixer slider
-    // then moved visually but never applied the volume (PSARC and sloppak).
+    // then moved visually but never applied the volume (archive and sloppak).
     const window = loadAudioSession();
     const audioSession = window.slopsmith.audioSession;
     audioSession.startSession({ sessionId: 'main:test-song', songKey: 'test-song', songFormat: 'sloppak' });

@@ -532,7 +532,13 @@ lyrics.json            Syllable-level lyrics (optional)
 
 Sloppak is the preferred format for new features. The [Stems plugin](https://github.com/topkoa/slopsmith-plugin-stems) provides live stem mixing for sloppak songs.
 
-**Full developer reference:** [docs/sloppak-spec.md](docs/sloppak-spec.md) — manifest schema, arrangement wire format, and how to extend the format with new data types (drum tab, key/scale annotations, etc.).
+**Full developer reference:** the authoritative format spec now lives in its own repo —
+[got-feedback/feedback-feedpak-spec](https://github.com/got-feedback/feedback-feedpak-spec)
+([`spec/feedpak-v1.md`](https://github.com/got-feedback/feedback-feedpak-spec/blob/main/spec/feedpak-v1.md)):
+manifest schema, arrangement wire format, and how to extend the format with new data types (drum
+tab, key/scale annotations, etc.). Published as **feedpak**; this codebase still uses the legacy
+**sloppak** name internally — same on-disk format. [docs/sloppak-spec.md](docs/sloppak-spec.md) is
+a local pointer + code map.
 
 **Key code:**
 - `lib/sloppak.py` — format detection, zip/directory resolution, metadata extraction, song loading

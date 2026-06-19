@@ -100,7 +100,9 @@ do not collide in `sys.modules`.
 The whole point of Slopsmith is that a user points it at an existing
 song library folder and it Just Works. The library is scanned and
 indexed in `meta.db` (SQLite via `MetadataDB`). The open Sloppak
-format (`lib/sloppak.py`, `docs/sloppak-spec.md`) is the preferred
+format (`lib/sloppak.py`; specified at
+[got-feedback/feedback-feedpak-spec](https://github.com/got-feedback/feedback-feedpak-spec),
+published as feedpak — same format) is the preferred
 format and the home for new features; loose-folder XML charts
 (`lib/loosefolder.py`) are also discovered and played as a first-class
 format. Both must keep playing across releases.

@@ -60,6 +60,8 @@ import yaml  # noqa: E402
 
 import notation as notation_mod  # noqa: E402, F401  (re-exported for tests)
 
+from jsonc import load_json  # noqa: E402
+
 # The wire→notation heuristic core lives in ``lib/notation_lift.py`` so it can
 # be reused in-process (e.g. by the Arrangement Editor's notation save path)
 # rather than being copy-pasted out of this one-time CLI. Re-exported here so
@@ -114,7 +116,7 @@ def _load_song_beats(pak: Path, manifest: dict) -> list[dict]:
         st_path = _safe_child(pak, st_rel)
         if st_path is not None and st_path.is_file():
             try:
-                data = json.loads(st_path.read_text(encoding="utf-8"))
+                data = load_json(st_path)
                 # An empty beats list is not an authoritative timeline — fall
                 # through to the arrangement JSONs rather than ending up with
                 # zero downbeats and skipping the whole sloppak.
@@ -134,7 +136,7 @@ def _load_song_beats(pak: Path, manifest: dict) -> list[dict]:
         if arr_path is None or not arr_path.is_file():
             continue
         try:
-            data = json.loads(arr_path.read_text(encoding="utf-8"))
+            data = load_json(arr_path)
         except (OSError, ValueError):
             continue
         if isinstance(data, dict):
@@ -219,7 +221,7 @@ def lift_sloppak(pak: Path, *, dry_run: bool = False) -> list[str]:
             continue
 
         try:
-            arr_data = json.loads(arr_path.read_text(encoding="utf-8"))
+            arr_data = load_json(arr_path)
         except (OSError, ValueError) as e:
             log.warning("%s/%s: unreadable arrangement JSON (%s) — skipped",
                         pak.name, arr_id, e)

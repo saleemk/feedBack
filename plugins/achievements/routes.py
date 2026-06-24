@@ -26,14 +26,15 @@ Pure threshold/criterion math lives in the sibling ``engine.py`` (P-V testable);
 this module is the SQLite + HTTP shell.
 """
 
+import hashlib
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
 
-from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 _lock = threading.Lock()
@@ -162,8 +163,109 @@ def _enqueue_feat_sync(conn, feat_id, unlocked_at):
     return True
 
 
+# ── Wall sync — background drain worker (dead-letter, never drop) ─────────────
+# Idle unless a wall URL is configured. POSTs pending rows to the hosted
+# feedback-achievements service; the decision state machine
+# (engine.drain_decision) is pure + tested. A row leaves the queue only on a
+# server ack (or a user opt-out wiping it) — never silently dropped.
+
+# Canonical hosted Feats wall (the got-feedback service). Used by default so the
+# drain worker targets it out of the box; override via env for self-hosting or a
+# staging wall. Nothing is ever sent unless the user opted in AND has an identity
+# (see _enqueue_feat_sync), so a default URL does not publish anything on its own.
+_DEFAULT_WALL_URL = "https://feedback-achievements.onrender.com"
+_WALL_URL = (os.environ.get("FEEDBACK_ACHIEVEMENTS_WALL_URL")
+             or os.environ.get("SLOPSMITH_ACHIEVEMENTS_WALL_URL")
+             or _DEFAULT_WALL_URL).rstrip("/")
+_WALL_TOKEN = os.environ.get("FEEDBACK_ACHIEVEMENTS_CLIENT_TOKEN", "fb-wall-v1")
+_DRAIN_INTERVAL_S = int(os.environ.get("FEEDBACK_ACHIEVEMENTS_DRAIN_INTERVAL", "30"))
+_drain_started = False
+
+
+def _post_to_wall(kind, payload):
+    """POST one queued item; return the HTTP status code, or None on a network
+    error. Mirrors the lib/lyrics_transcribe outbound pattern (explicit timeout,
+    no raise on non-2xx — the caller's state machine decides)."""
+    import requests  # local import: only needed when a wall is configured
+
+    path = "/api/unlock" if kind == "unlock" else "/api/remove"
+    try:
+        resp = requests.post(
+            _WALL_URL + path, json=payload,
+            headers={"X-Client-Token": _WALL_TOKEN, "Content-Type": "application/json"},
+            timeout=10,
+        )
+        return resp.status_code
+    except requests.RequestException:
+        return None
+
+
+def _drain_once(post_fn=None):
+    """Process all pending queue rows once. ``post_fn(kind, payload) -> status``
+    is injectable for tests; defaults to the real wall POST."""
+    post_fn = post_fn or _post_to_wall
+    engine = _state["engine"]
+    with _lock:
+        conn = _conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, kind, payload FROM sync_queue WHERE state='pending'").fetchall()
+        finally:
+            conn.close()
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"]) if row["payload"] else {}
+        except ValueError:
+            payload = {}
+        status = post_fn(row["kind"], payload)
+        action = engine.drain_decision(status)
+        with _lock:
+            conn = _conn()
+            try:
+                if action == "ack":
+                    conn.execute("DELETE FROM sync_queue WHERE id=?", (row["id"],))
+                elif action == "dead":
+                    conn.execute("UPDATE sync_queue SET state='dead_letter' WHERE id=?", (row["id"],))
+                # 'retry' → leave it pending for the next pass
+                conn.commit()
+            finally:
+                conn.close()
+
+
+def _drain_loop():
+    while True:
+        try:
+            _drain_once()
+        except Exception as e:  # noqa: BLE001 — a worker crash must not kill the thread
+            _state["log"].warning("achievements wall drain error: %s", e)
+        time.sleep(_DRAIN_INTERVAL_S)
+
+
+def _maybe_start_drain():
+    global _drain_started
+    if _drain_started or not _WALL_URL:
+        return
+    _drain_started = True
+    threading.Thread(target=_drain_loop, name="ach-wall-drain", daemon=True).start()
+    _state["log"].info("achievements wall drain worker started → %s", _WALL_URL)
+
+
+def _chart_key(chart):
+    """Stable per-chart counter key — a sha1 digest of the chart id. NOT the
+    builtin hash(), whose str hashing is salted per process (PYTHONHASHSEED), so
+    the same chart would land on a different counter after every restart and the
+    Encore Feat could never accumulate across sessions."""
+    return "chart_plays:" + hashlib.sha1(str(chart).encode("utf-8")).hexdigest()[:16]
+
+
 def _read_counters(conn):
-    return {row["key"]: int(row["value"]) for row in conn.execute("SELECT key, value FROM counters")}
+    # Excludes the per-chart `chart_plays:*` rows: they are bumped + read
+    # individually via _bump_counter and would otherwise make this aggregate
+    # round-trip O(distinct charts played) on every activity POST.
+    return {
+        row["key"]: int(row["value"])
+        for row in conn.execute("SELECT key, value FROM counters WHERE key NOT LIKE 'chart_plays:%'")
+    }
 
 
 def _write_counters(conn, counters):
@@ -297,13 +399,18 @@ def setup(app, context):
         with _lock:
             conn = _conn()
             try:
-                # Per-chart play count is the only stateful bit; bump it first so
-                # apply_activity() stays pure (it just takes the new max).
+                # Per-chart play count is the only directly-stateful bit; bump it
+                # first (stable key) so apply_activity() just takes the new max.
                 chart_play_count = None
                 if body.song_done and body.chart:
-                    chart_key = "chart_plays:" + str(abs(hash(body.chart)))
-                    chart_play_count = _bump_counter(conn, chart_key, 1)
-                # Night-window ledger → consecutive-night run feeds witching feat.
+                    chart_play_count = _bump_counter(conn, _chart_key(body.chart), 1)
+                # Night-window ledger → consecutive-night run. Computed here but
+                # NOT written before the prev snapshot: it is folded into the delta
+                # below so prev_tiers reflects the OLD run and new_tiers the new one
+                # (the same asymmetry chart_encore relies on). Pre-writing it would
+                # make prev already satisfy the Feat, so diff_unlocks would never
+                # see the freshly-earned witching unlock.
+                witching_run = None
                 if body.night_session and body.night_date:
                     conn.execute(
                         "INSERT OR IGNORE INTO comp_ledger(criterion_id, token) VALUES ('witching', ?)",
@@ -311,13 +418,10 @@ def setup(app, context):
                     )
                     nights = [r["token"] for r in conn.execute(
                         "SELECT token FROM comp_ledger WHERE criterion_id='witching'")]
-                    run = engine.consecutive_run_length(nights)
-                    conn.execute(
-                        "INSERT INTO counters(key, value) VALUES ('witching_nights_run', ?) "
-                        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (run,))
+                    witching_run = engine.consecutive_run_length(nights)
 
                 counters = _read_counters(conn)
-                prev_tiers = _state["engine"].evaluate_feats(_state["feat_defs"], counters)
+                prev_tiers = engine.evaluate_feats(_state["feat_defs"], counters)
                 new_counters = engine.apply_activity(counters, {
                     "notes": body.notes,
                     "session_notes": body.session_notes,
@@ -326,6 +430,9 @@ def setup(app, context):
                     "seconds": body.seconds,
                     "chart_play_count": chart_play_count,
                 })
+                if witching_run is not None:
+                    new_counters["witching_nights_run"] = max(
+                        int(new_counters.get("witching_nights_run", 0) or 0), witching_run)
                 _write_counters(conn, new_counters)
                 new_tiers = engine.evaluate_feats(_state["feat_defs"], new_counters)
                 fresh = engine.diff_unlocks(prev_tiers, new_tiers)
@@ -427,17 +534,24 @@ def setup(app, context):
         # Local removal works offline: drop the synced flag so nothing re-syncs,
         # and enqueue a wall removal (drained in PR3). The wall identity
         # (player_hash) is resolved server-side at drain time, not stored here.
+        _, player_hash = _identity()
         with _lock:
             conn = _conn()
             try:
                 conn.execute("UPDATE unlocks SET synced=0 WHERE cls='feat'")
-                conn.execute(
-                    "INSERT INTO sync_queue(kind, payload, state) VALUES ('remove', '{}', 'pending')")
+                # Enqueue a wall removal only when we have an identity to key it
+                # by; the drain worker (below) POSTs it. Idempotent server-side.
+                if player_hash:
+                    conn.execute(
+                        "INSERT INTO sync_queue(kind, payload, state) VALUES ('remove', ?, 'pending')",
+                        (json.dumps({"player_hash": player_hash}),),
+                    )
                 conn.commit()
                 return {"ok": True}
             finally:
                 conn.close()
 
+    _maybe_start_drain()
     log.info("achievements engine ready (%d feats, baseline v%s)",
              len(_state["feat_defs"]), str(_state["baseline"].get("version", "?")))
 

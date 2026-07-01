@@ -1929,6 +1929,7 @@ class MetadataDB:
                      stems_lacks: list[str] | None = None,
                      has_lyrics: int | None = None,
                      tunings: list[str] | None = None,
+                     mastery: list[str] | None = None,
                      naming_mode: str = "legacy") -> tuple[str, list]:
         """Shared WHERE-clause builder for query_page / query_artists /
         query_stats. Returns (where_sql, params). Leading 'WHERE' is
@@ -1947,6 +1948,19 @@ class MetadataDB:
         if album_filter:
             where += " AND album = ? COLLATE NOCASE"
             params.append(album_filter)
+        # Mastery bands = best accuracy across a song's arrangements (song_stats,
+        # a separate table -> correlated subquery). mastered >= 0.9, in_progress =
+        # attempted but < 0.9, not_started = no score. OR within the selected set.
+        if mastery:
+            _msub = "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename)"
+            _bands = {
+                "mastered": f"{_msub} >= 0.9",
+                "in_progress": f"({_msub} IS NOT NULL AND {_msub} < 0.9)",
+                "not_started": f"{_msub} IS NULL",
+            }
+            _sel = [_bands[b] for b in mastery if b in _bands]
+            if _sel:
+                where += " AND (" + " OR ".join(_sel) + ")"
         if q:
             where += " AND (title LIKE ? COLLATE NOCASE OR artist LIKE ? COLLATE NOCASE OR album LIKE ? COLLATE NOCASE)"
             params += [f"%{q}%"] * 3
@@ -2099,6 +2113,7 @@ class MetadataDB:
                    stems_lacks: list[str] | None = None,
                    has_lyrics: int | None = None,
                    tunings: list[str] | None = None,
+                   mastery: list[str] | None = None,
                    after: str | None = None,
                    naming_mode: str = "legacy") -> tuple[list[dict], int]:
         """Server-side paginated search. Returns (songs, total_count).
@@ -2112,7 +2127,7 @@ class MetadataDB:
             artist_filter=artist_filter, album_filter=album_filter,
             arrangements_has=arrangements_has, arrangements_lacks=arrangements_lacks,
             stems_has=stems_has, stems_lacks=stems_lacks,
-            has_lyrics=has_lyrics, tunings=tunings, naming_mode=naming_mode,
+            has_lyrics=has_lyrics, tunings=tunings, mastery=mastery, naming_mode=naming_mode,
         )
 
         sort_map = {
@@ -2153,6 +2168,20 @@ class MetadataDB:
             # '2005' rather than alphabetic.
             "year": "(year = '') ASC, CAST(year AS INTEGER) ASC",
             "year-desc": "(year = '') ASC, CAST(year AS INTEGER) DESC",
+            # Mastery = best accuracy across a song's arrangements, from the
+            # separate song_stats table (so via a correlated subquery — this sort
+            # drops to OFFSET paging, like tuning/year). Unscored ("not started")
+            # songs push to the BOTTOM in both directions (the IS NULL term);
+            # ascending is "needs practice first" (weakest measured first),
+            # descending is "most mastered first".
+            "mastery": (
+                "((SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) ASC"
+            ),
+            "mastery-desc": (
+                "((SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) DESC"
+            ),
         }
         order = sort_map.get(sort, "artist COLLATE NOCASE")
         # Legacy `dir=desc` toggle: only safe to append on simple sort
@@ -4950,7 +4979,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
                        arrangements_has: str = "", arrangements_lacks: str = "",
                        stems_has: str = "", stems_lacks: str = "",
                        has_lyrics: str = "", tunings: str = "", provider: str = "local",
-                       after: str = "", naming_mode: str = "legacy"):
+                       mastery: str = "", after: str = "", naming_mode: str = "legacy"):
     """Paginated library search through the selected library provider.
 
     `after` is an opaque keyset cursor (feedBack#636 item 3): pass back the
@@ -4974,6 +5003,7 @@ async def list_library(q: str = "", page: int = 0, size: int = 24, sort: str = "
         direction=dir,
         after=((after or None) if is_local else None),
         naming_mode=naming_mode,
+        mastery=_split_csv(mastery),
         **_library_filter_args(
             q=q, favorites=favorites, format=format,
             artist=artist, album=album,

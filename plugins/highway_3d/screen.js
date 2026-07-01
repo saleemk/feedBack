@@ -3983,6 +3983,10 @@
         let _laneRailBoundsRefTpl = null;
         let _laneRailBoundsRefNotes = null;
         let _lastHwW = 0, _lastHwH = 0;
+        // Frame counter for throttling the CSS-box drift check in draw()
+        // (getBoundingClientRect is a forced layout read; see the comment
+        // at the check).
+        let _boxCheckCountdown = 0;
         // Last logical (CSS px) size handed to applySize(). #highway is a
         // flex:1 item, so its real rendered box (canvasSize()) can change as
         // the player layout settles after a song opens WITHOUT the backing
@@ -9928,6 +9932,23 @@
         //                           draw() after each init.
         // txtMat() rasterises into the unbounded cache these draws hit
         // anyway; ren.initTexture() forces the GPU upload now.
+        // Swap a pooled label sprite's cached texture WITHOUT recompiling.
+        // Setting material.needsUpdate bumps material.version, which forces
+        // Three.js through getParameters/getProgramCacheKey on the next
+        // render — profiled at ~4% of throttled main-thread time from the
+        // per-frame label map swaps in dense charts. Swapping one non-null
+        // texture for another does NOT change the compiled program (the
+        // USE_MAP define is unchanged); only a null <-> non-null transition
+        // does, and pooled label sprites are constructed with a non-null
+        // map, so in practice this never recompiles.
+        function _setLabelMap(sprite, srcMat) {
+            const m = sprite.material;
+            if (m.map === srcMat.map) return;
+            const nullnessChanged = (m.map == null) !== (srcMat.map == null);
+            m.map = srcMat.map;
+            if (nullnessChanged) m.needsUpdate = true;
+        }
+
         let _chartPrewarmed = false;
         function _prewarmTex(mat) {
             if (mat && mat.map && ren) ren.initTexture(mat.map);
@@ -11967,7 +11988,7 @@
                             const lblW = 28 * K, lblH = 9 * K;
                             const lbl = pChordLbl.get();
                             const mat = txtMat(chordName, '#e8d080', true, 'chord');
-                            if (lbl.material.map !== mat.map) { lbl.material.map = mat.map; lbl.material.needsUpdate = true; }
+                            _setLabelMap(lbl, mat);
                             lbl.material.opacity = Math.min(1, 0.3 + fade * 0.7) * chordTailMul;
                             // Gold chord name: slight +X shift from flush-left so it sits farther right.
                             const lblWS = lblW * _textSizeMul;
@@ -12003,7 +12024,7 @@
                                     if (!text) return;
                                     const s = pChordLbl.get();
                                     const m = txtMat(text, colorHex, true, 'chord');
-                                    if (s.material.map !== m.map) { s.material.map = m.map; s.material.needsUpdate = true; }
+                                    _setLabelMap(s, m);
                                     s.material.opacity = opacity;
                                     s.position.set(baseX, hy, z);
                                     s.scale.set(hlW, hlH, 1);
@@ -12127,10 +12148,7 @@
                                 _seenChordFrets.add(f);
                                 const lbl = pNoteFretLabel.get();
                                 const mat = txtMat(f, FRET_LABEL_GOLD_HEX, false, 'noteFret');
-                                if (lbl.material.map !== mat.map) {
-                                    lbl.material.map = mat.map;
-                                    lbl.material.needsUpdate = true;
-                                }
+                                _setLabelMap(lbl, mat);
                                 lbl.position.set(xFretMid(f), yMinF, z);
                                 lbl.renderOrder = renderOrderForLayerAtZ(z, 'CHORD_FRET_LABEL');
                                 const _flS = 7.0 * K * (1 + 0.4 * chDt / AHEAD) * _textSizeMul * fretLabelScaleForFret(f);
@@ -12753,10 +12771,7 @@
                         const color = '#888888';
                         const sp = pFretColMarker.get();
                         const m = txtMat(f, color, false, 'noteFret');
-                        if (sp.material.map !== m.map) {
-                            sp.material.map = m.map;
-                            sp.material.needsUpdate = true;
-                        }
+                        _setLabelMap(sp, m);
                         sp.material.opacity = 0.85 * _colFadeIn;
                         sp.position.set(xFretMid(f), labelY, z);
                         // Z-proportional: sits between chord frame and note gem
@@ -14039,10 +14054,7 @@
                         _frameLabeledKeys.add(_flFrameKey);
                         const fretLabel  = pNoteFretLabel.get();
                         const cachedMat  = txtMat(n.f, FRET_LABEL_GOLD_HEX, false, 'noteFret');
-                        if (fretLabel.material.map !== cachedMat.map) {
-                            fretLabel.material.map = cachedMat.map;
-                            fretLabel.material.needsUpdate = true;
-                        }
+                        _setLabelMap(fretLabel, cachedMat);
                         fretLabel.position.set(x, labelY, noteZ);
                         fretLabel.renderOrder = renderOrderForLayerAtZ(noteZ,
                             _isArpNote
@@ -14067,10 +14079,7 @@
                             if (!text) return;
                             const spr = pTeachMarkLbl.get();
                             const m = txtMat(text, colorHex, false, cacheKey);
-                            if (spr.material.map !== m.map) {
-                                spr.material.map = m.map;
-                                spr.material.needsUpdate = true;
-                            }
+                            _setLabelMap(spr, m);
                             spr.position.set(x + dx, labelY, noteZ);
                             spr.renderOrder = renderOrderForLayerAtZ(noteZ,
                                 _isArpNote ? 'ARP_NOTE_FRET_LABEL' : 'NOTE_FRET_LABEL');
@@ -14104,10 +14113,7 @@
                     const _isArp2   = arpBounds !== null;
                     const fl2 = pNoteFretLabel.get();
                     const cm2 = txtMat(n.f, FRET_LABEL_GOLD_HEX, false, 'noteFret');
-                    if (fl2.material.map !== cm2.map) {
-                        fl2.material.map = cm2.map;
-                        fl2.material.needsUpdate = true;
-                    }
+                    _setLabelMap(fl2, cm2);
                     fl2.position.set(x, _labelY2, noteZ);
                     fl2.renderOrder = renderOrderForLayerAtZ(noteZ,
                         _isArp2
@@ -15163,25 +15169,40 @@
                 //     for the pre-settle (too-tall) size and crops the near strings
                 //     / fret numbers until the user un/re-maximizes the window.
                 if (highwayCanvas) {
-                    const box = canvasSize(highwayCanvas);
-                    if (highwayCanvas.width !== _lastHwW || highwayCanvas.height !== _lastHwH) {
-                        _lastHwW = highwayCanvas.width;
-                        _lastHwH = highwayCanvas.height;
-                        if (box.w > 0 && box.h > 0) applySize(box.w, box.h);
-                    } else if (box.w > 0 && box.h > 0 &&
-                            (Math.abs(box.w - _appliedW) > 1 || Math.abs(box.h - _appliedH) > 1)) {
-                        applySize(box.w, box.h);
-                    } else if (!_wrapPinned && box.w > 0 && box.h > 0 &&
-                            highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
-                        //  3. The overlay pin couldn't be applied at init because
-                        //     #highway had no layout yet (offsetWidth/Height === 0),
-                        //     so applySize() only set the wrap height. The canvas has
-                        //     now laid out but to the same logical size, so neither
-                        //     drift branch above fires — re-run applySize to pin the
-                        //     wrap to the canvas box now that its offsets are real.
-                        //     Otherwise the overlay stays at top:0;left:0;right:0 and
-                        //     a strip of #highway is exposed on first load / split.
-                        applySize(box.w, box.h);
+                    // Backing-store drift (branch 1) is detected with cheap
+                    // property reads every frame. The CSS-box checks (branches
+                    // 2/3) need canvasSize() → getBoundingClientRect(), a
+                    // forced layout read — profiled at ~1.2% of throttled
+                    // main-thread time when run per frame. Throttle the box
+                    // read to every 10th frame (plus whenever the backing
+                    // store changed or the wrap isn't pinned yet): the layout
+                    // settle it exists to catch plays out over hundreds of ms
+                    // right after a song opens, so a ~166 ms detection cadence
+                    // loses nothing visible.
+                    const _bsChanged = highwayCanvas.width !== _lastHwW
+                        || highwayCanvas.height !== _lastHwH;
+                    _boxCheckCountdown = (_boxCheckCountdown + 1) % 10;
+                    if (_bsChanged || !_wrapPinned || _boxCheckCountdown === 0) {
+                        const box = canvasSize(highwayCanvas);
+                        if (_bsChanged) {
+                            _lastHwW = highwayCanvas.width;
+                            _lastHwH = highwayCanvas.height;
+                            if (box.w > 0 && box.h > 0) applySize(box.w, box.h);
+                        } else if (box.w > 0 && box.h > 0 &&
+                                (Math.abs(box.w - _appliedW) > 1 || Math.abs(box.h - _appliedH) > 1)) {
+                            applySize(box.w, box.h);
+                        } else if (!_wrapPinned && box.w > 0 && box.h > 0 &&
+                                highwayCanvas.offsetWidth > 0 && highwayCanvas.offsetHeight > 0) {
+                            //  3. The overlay pin couldn't be applied at init because
+                            //     #highway had no layout yet (offsetWidth/Height === 0),
+                            //     so applySize() only set the wrap height. The canvas has
+                            //     now laid out but to the same logical size, so neither
+                            //     drift branch above fires — re-run applySize to pin the
+                            //     wrap to the canvas box now that its offsets are real.
+                            //     Otherwise the overlay stays at top:0;left:0;right:0 and
+                            //     a strip of #highway is exposed on first load / split.
+                            applySize(box.w, box.h);
+                        }
                     }
                 }
                 update(bundle);

@@ -9777,6 +9777,12 @@ async function startSongCountIn() {
 
 // Time display + highway sync
 let lastAudioTime = 0;
+// hud-time write cache: the 60 Hz tick below used to rewrite textContent
+// (and getElementById) every tick even though the mm:ss display only
+// changes once a second — each write invalidates layout. Write-on-change
+// with a cached element ref (re-resolved if detached).
+let _hudTimeEl = null;
+let _hudTimeLast = '';
 setInterval(() => {
     let ct = _audioTime();
     const dur = _audioDuration();
@@ -9804,7 +9810,12 @@ setInterval(() => {
             ct = lastAudioTime;
         }
         lastAudioTime = ct;
-        document.getElementById('hud-time').textContent = `${formatTime(ct)} / ${formatTime(dur)}`;
+        const hudText = `${formatTime(ct)} / ${formatTime(dur)}`;
+        if (hudText !== _hudTimeLast) {
+            if (!_hudTimeEl || !_hudTimeEl.isConnected) _hudTimeEl = document.getElementById('hud-time');
+            if (_hudTimeEl) _hudTimeEl.textContent = hudText;
+            _hudTimeLast = hudText;
+        }
         if (dur) {
             _maybeRefreshSectionPracticeDuration(dur);
         }

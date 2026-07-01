@@ -268,6 +268,13 @@ test('opening the panel prunes before the first dropdown build', () => {
     );
 });
 
+test('Reset on All restores defaults exactly (no forced enabled)', () => {
+    // Panel visibility is independent of the enabled flag now, so Reset must not
+    // force enabled true — it should restore _ASPECT_DEFAULTS verbatim.
+    assert.doesNotMatch(src, /Object\.keys\(_ASPECT_DEFAULTS\)[\s\S]*?base\.enabled\s*=\s*true/,
+        'Reset must not override the default enabled state');
+});
+
 test('the panel has a dismiss (close) control', () => {
     assert.match(
         src,

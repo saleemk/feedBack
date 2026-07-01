@@ -1987,13 +1987,13 @@
             b.addEventListener('click', fn);
             return b;
         };
-        // Reset: for "All" restores the shared defaults (enabled); for a pane
-        // clears that pane's override so it inherits the shared base again.
+        // Reset: for "All" restores the shared defaults exactly; for a pane
+        // clears that pane's override so it inherits the shared base again. Panel
+        // visibility is independent (Shift+A / ×), so Reset doesn't force it open.
         btnRow.appendChild(mkBtn('Reset', () => {
             const base = _aspectTune();
             if (!_aspectEditTarget) {
                 Object.keys(_ASPECT_DEFAULTS).forEach((k) => { base[k] = _ASPECT_DEFAULTS[k]; });
-                base.enabled = true;
             } else if (base.__panels) {
                 delete base.__panels[_aspectEditTarget];
             }

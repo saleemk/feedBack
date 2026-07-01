@@ -13,6 +13,10 @@
     let _lastAutoOpenSessionKey = null;
     let _autoOpenDismissedSessionKey = null;
     let _autoOpenGeneration = 0;
+    // Bumped on every enable()/disable() so an in-flight open (which awaits audio start
+    // with the panel already visible) can detect it was dismissed mid-open and NOT flip
+    // _state.enabled on afterwards — avoiding a zombie enabled-but-hidden tuner.
+    let _openGen = 0;
     let _onAutoOpenSongLoading = null;
     let _onAutoOpenSongReady = null;
 
@@ -167,66 +171,177 @@
         return _openMidisFromFreqs(u.offsetsToFreqs(offsets, isBass));
     }
 
-    // The player's PHYSICAL instrument from core /api/settings (the v3 instrument
-    // badge's selection — a STABLE reference, NOT the tuner's song-tracking
-    // _syncCurrentTuning). Returns { midis, refCents } or null.
+    // The player's CURRENT physical tuning. Prefer the host-owned live working
+    // tuning (window.feedBack.workingTuning) — what the instrument is *actually* in
+    // right now, which advances as the player retunes — so coverage prompts fire in
+    // BOTH directions (E→C# and back), not only away from a fixed profile. Feature-
+    // detected: on a host without the working-tuning capability, or before it's been
+    // set, we fall back to the static /api/settings instrument tuning (today's
+    // behavior). Returns { midis, refCents } or null.
+    // The SELECTED physical instrument's working-tuning slot identity, from /api/settings.
+    // The read (_playerTuning) and the write (_publishWorkingTuning) MUST agree on this
+    // key — the working tuning is a property of the player's selected instrument, not of
+    // any one song — or a published tuning lands in a slot coverage never reads back.
+    // Returns { isBass, sc, key }.
+    function _selectedInstrument(s) {
+        const isBass = !!(s && s.instrument === 'bass');
+        const sc = (s && Number(s.string_count)) || (isBass ? 4 : 6);
+        return { isBass, sc, key: (isBass ? 'bass' : 'guitar') + '-' + sc };
+    }
+
     async function _playerTuning() {
         const u = window._tunerUtils;
         if (!u) return null;
-        let s;
+        // Instrument IDENTITY (which instrument is selected) + the static fallback
+        // tuning, from /api/settings.
+        let s = null;
         try { s = await fetch('/api/settings').then((r) => (r && r.ok ? r.json() : null)); }
-        catch (_) { return null; }
-        if (!s) return null;
-        const isBass = s.instrument === 'bass';
-        const sc = Number(s.string_count) || (isBass ? 4 : 6);
-        const refPitch = Number(s.reference_pitch) || 440;
+        catch (_) { s = null; }
+        const { isBass, sc, key } = _selectedInstrument(s);
+        // Cache the resolved selection so the (synchronous) publish-on-clear writes to
+        // the EXACT slot this read path uses — no second /api/settings fetch that could
+        // race an instrument switch. Only cache when settings were actually read: on a
+        // fetch failure we keep the last confident selection (or none → publish skips)
+        // rather than recording a bogus default-instrument slot to publish into later.
+        // Coverage runs before any auto-open, so this is set by the time a clear can publish.
+        if (s) {
+            _state._playerSelected = { isBass, sc, key, refPitch: Number(s.reference_pitch) || 440 };
+        }
+        // The LIVE per-instrument working tuning (advances as the player retunes) —
+        // this is what makes coverage prompt in BOTH directions, not only away from a
+        // fixed profile. Feature-detected; falls back to the static settings tuning
+        // when unset / no host capability.
+        const wt = (window.feedBack && window.feedBack.workingTuning
+            && typeof window.feedBack.workingTuning.get === 'function')
+            ? window.feedBack.workingTuning.get(key) : null;
+        const wtHasOffsets = !!(wt && Array.isArray(wt.offsets) && wt.offsets.length);
         let freqs = null;
-        if (Array.isArray(s.tuning)) {
+        if (wtHasOffsets) {
+            freqs = u.offsetsToFreqs(wt.offsets.slice(0, sc), isBass);
+        } else if (s && Array.isArray(s.tuning)) {
             freqs = u.offsetsToFreqs(s.tuning.slice(0, sc), isBass);
-        } else if (typeof s.tuning === 'string') {
-            const named = _state._allTunings && _state._allTunings[(isBass ? 'bass' : 'guitar') + '-' + sc];
+        } else if (s && typeof s.tuning === 'string') {
+            const named = _state._allTunings && _state._allTunings[key];
             if (named && Array.isArray(named[s.tuning])) freqs = named[s.tuning];
         }
-        if (!freqs) freqs = u.offsetsToFreqs(new Array(sc).fill(0), isBass);   // standard fallback
+        if (!freqs) {
+            // No confident instrument identity — settings absent, OR present but carrying
+            // no instrument/string_count/tuning (a fresh profile: /api/settings omits them)
+            // — and no live working tuning. We can't tell the player's tuning, so fail
+            // toward prompting (null → not-covered) rather than silently assuming standard
+            // and suppressing a genuinely-needed prompt.
+            const hasIdentity = !!(s && (s.instrument || s.string_count || s.tuning));
+            if (!hasIdentity && !wtHasOffsets) return null;
+            freqs = u.offsetsToFreqs(new Array(sc).fill(0), isBass);   // standard fallback
+        }
         const midis = _openMidisFromFreqs(freqs);
         if (!midis) return null;
+        const refPitch = (wt && Number(wt.referencePitch)) || (s && Number(s.reference_pitch)) || 440;
         return { midis, refCents: 1200 * Math.log2(refPitch / 440) };
     }
 
-    // The song's open strings must appear as an exact, contiguous, order-preserving
-    // run inside the player's strings (extended-range adds strings at the low/high
-    // ends — match by pitch, never by string index).
-    function _contiguousRunMatch(songMidis, playerMidis) {
-        if (playerMidis.length < songMidis.length) return false;
-        for (let start = 0; start + songMidis.length <= playerMidis.length; start++) {
-            let ok = true;
-            for (let i = 0; i < songMidis.length; i++) {
-                if (playerMidis[start + i] !== songMidis[i]) { ok = false; break; }
-            }
-            if (ok) return true;
-        }
-        return false;
+    // PR: host workingTuning — when the player clears an AUTO-OPENED tuner we assume
+    // they tuned their (selected) instrument to the song, so publish the song's tuning
+    // as the live working tuning for that instrument ('assumed' — PR 4's explicit
+    // "I tuned / Skip" will replace this heuristic). After the instrument->chart routing
+    // PR the loaded arrangement matches the selected instrument, so the song's tuning IS
+    // the player's instrument's new tuning.
+    //
+    // We write to the SELECTED instrument's slot (the exact key _playerTuning reads),
+    // NOT a song-derived one, so the publish can't be stranded in a slot coverage never
+    // looks at. If the cleared song is a chart for the OTHER instrument (a manual switch
+    // to e.g. the bass part while guitar is selected), we skip — that isn't evidence the
+    // selected instrument was retuned, and writing it would pollute the wrong slot.
+    //
+    // Synchronous, off the selection _playerTuning last resolved (`_state._playerSelected`)
+    // — an auto-open always runs a coverage check first, so it's populated by the time a
+    // clear can publish. Reusing it (rather than re-fetching /api/settings here) keeps the
+    // write key identical to the read key and avoids racing an instrument switch.
+    function _publishWorkingTuning(songInfo) {
+        const wt = window.feedBack && window.feedBack.workingTuning;
+        if (!wt || typeof wt.set !== 'function') return;
+        if (!songInfo || !Array.isArray(songInfo.tuning) || !songInfo.tuning.length) return;
+        const sel = _state._playerSelected;
+        if (!sel || !sel.key || !(sel.sc > 0)) return;   // coverage hasn't resolved the instrument yet
+        const ctx = (typeof window.feedBack?.songTuningContext === 'function')
+            ? window.feedBack.songTuningContext(songInfo)
+            : { stringCount: songInfo.stringCount, arrangement: songInfo.arrangement, arrangement_smart_name: songInfo.arrangement_smart_name };
+        const songIsBass = (typeof window.feedBack?.isBassArrangement === 'function')
+            ? window.feedBack.isBassArrangement(ctx)
+            : (songInfo.arrangement || '').toLowerCase().includes('bass');
+        if (songIsBass !== sel.isBass) return;   // cross-instrument chart — don't pollute the selected slot
+        wt.set({
+            offsets: songInfo.tuning.slice(0, sel.sc),
+            stringCount: sel.sc,
+            instrument: sel.isBass ? 'bass' : 'guitar',
+            referencePitch: sel.refPitch,
+            source: 'tuner',
+        }, { instrument: sel.key, provenance: 'assumed' });
     }
 
-    // True when the player's current physical tuning already covers the song
-    // (→ suppress auto-open). Conservative: any missing data returns false, so a
-    // genuinely-needed prompt is never silently dropped on a fetch hiccup.
-    async function _coveredByPlayerInstrument(songInfo) {
+    // The retune the player would need to match this song, as a structured report:
+    //   { covered, retune: [{ from, to }], reference, cantCover }
+    // — covered: the physical tuning already matches (the song's open strings are an
+    //   exact contiguous run inside the player's strings) → no retune;
+    // — retune: the per-string note changes (e.g. { from:'B', to:'A' }) of the best
+    //   contiguous alignment — what the badge cue names;
+    // — reference: a whole-instrument A4/centOffset mismatch (A440 vs A432, octave);
+    // — cantCover: the song needs more strings than the instrument has.
+    // Conservative: any missing data → { covered:false } so a needed prompt/cue is
+    // never silently dropped on a fetch hiccup.
+    async function _computeCoverageReport(songInfo) {
+        const u = window._tunerUtils;
+        const none = { covered: false, retune: [], reference: false, cantCover: false };
+        if (!u) return none;
         const song = _songOpenMidis(songInfo);
-        if (!song || !song.length) return false;
+        if (!song || !song.length) return none;
         const player = await _playerTuning();
-        if (!player || !player.midis.length) return false;
-        const songCents = Number(songInfo?.centOffset) || 0;
-        // Global reference / octave: a difference fretting can't absorb (A440 vs
-        // A432 ≈ 32¢, or an octave-down centOffset) → NOT covered.
-        if (Math.abs(songCents - player.refCents) > 25) return false;
-        return _contiguousRunMatch(song, player.midis);
+        if (!player || !player.midis.length) return none;
+        const reference = Math.abs((Number(songInfo?.centOffset) || 0) - player.refCents) > 25;
+        if (player.midis.length < song.length) return { covered: false, retune: [], reference, cantCover: true };
+        // Best contiguous alignment = the run with the fewest per-string mismatches
+        // (extended-range adds strings at the ends — match by pitch, not index).
+        let best = null;
+        for (let start = 0; start + song.length <= player.midis.length; start++) {
+            const diffs = [];
+            for (let i = 0; i < song.length; i++) {
+                const pm = player.midis[start + i];
+                if (pm !== song[i]) diffs.push({ from: u.midiToNote(pm, false), to: u.midiToNote(song[i], false) });
+            }
+            if (!best || diffs.length < best.length) best = diffs;
+            if (!diffs.length) break;
+        }
+        const covered = !reference && best.length === 0;
+        return { covered, retune: covered ? [] : best, reference, cantCover: false };
+    }
+
+    // Dedup the coverage computation (which fetches /api/settings): the auto-open gate
+    // AND the badge cue both call this on the same song:ready. Cache the in-flight/last
+    // result per song so they share ONE fetch. Invalidated when anything that changes the
+    // answer happens — a new song (song:loading), an instrument switch (instrument:changed),
+    // or a retune (working-tuning-changed) — so the cache can never go stale within a song.
+    let _coverageCache = null;   // { key, promise }
+    function _coverageReport(songInfo) {
+        const key = _autoOpenSessionKey(songInfo) + '|'
+            + (songInfo && Array.isArray(songInfo.tuning) ? songInfo.tuning.join(',') : '')
+            + '|' + (songInfo && songInfo.centOffset != null ? songInfo.centOffset : '');   // coverage uses centOffset
+        if (_coverageCache && _coverageCache.key === key) return _coverageCache.promise;
+        const promise = _computeCoverageReport(songInfo);
+        _coverageCache = { key, promise };
+        return promise;
+    }
+    function _invalidateCoverageCache() { _coverageCache = null; }
+
+    // Boolean form used to gate the auto-open prompt.
+    async function _coveredByPlayerInstrument(songInfo) {
+        return (await _coverageReport(songInfo)).covered;
     }
 
     function _onAutoOpenSongLoadingHandler() {
         _autoOpenGeneration++;
         _autoOpenDismissedSessionKey = null;
         _lastAutoOpenSessionKey = null;
+        _invalidateCoverageCache();
     }
 
     async function _maybeAutoOpenOnTuningChange() {
@@ -289,6 +404,14 @@
         _onAutoOpenSongReady = () => { _maybeAutoOpenOnTuningChange(); };
         window.feedBack.on('song:loading', _onAutoOpenSongLoading);
         window.feedBack.on('song:ready', _onAutoOpenSongReady);
+        // The badge (static/v3/badges.js) emits this on the feedBack bus when the player
+        // switches instrument. Drop the cached selection so a publish-on-clear can't write
+        // to the previously-selected instrument's slot; the next coverage read re-resolves
+        // it. Until then _publishWorkingTuning skips (safe — no mis-slotted write).
+        window.feedBack.on('instrument:changed', () => { _state._playerSelected = null; _invalidateCoverageCache(); });
+        // A retune (working tuning published on a tuner clear) changes coverage for the
+        // current song — drop the cached report so a re-evaluation recomputes it.
+        window.feedBack.on('working-tuning-changed', _invalidateCoverageCache);
     }
 
     // ── Player sync helpers ───────────────────────────────────────────
@@ -446,6 +569,7 @@
 
     async function enable(opts) {
         if (_state.enabled) return;
+        const myOpen = ++_openGen;   // this open's token; a disable()/newer open invalidates it
         // An AUTO-open (the "this song needs a different tuning" nudge) must
         // PERSIST: it is NOT dismissed by the autoplay song:play that follows
         // song entry, a stray click, or a same-screen re-emit — only by the
@@ -518,6 +642,10 @@
                 { deviceId: _state.selectedDeviceId, channel: _state.selectedChannel, audioInputMode: _state.audioInputMode },
                 _tunerUIApi.updateUI
             );
+            // The panel is visible (with ×/Skip) across the audio-start await above, so a
+            // dismiss can land here. If so, disable() already tore the panel down and
+            // bumped _openGen — do NOT flip enabled on (that would leave enabled-but-hidden).
+            if (myOpen !== _openGen) return;
             _state.enabled = true;
             if (window.tuner?.updateButtons) window.tuner.updateButtons();
         } catch (e) {
@@ -528,7 +656,9 @@
     }
 
     function disable() {
+        _openGen++;   // invalidate any in-flight enable() so it won't re-enable after this teardown
         const wasEnabled = _state.enabled;
+        const wasAutoOpened = _state.autoOpened;
         const onPlayer = document.getElementById('player')?.classList.contains('active');
         _state.enabled = false;
         _state.autoOpened = false;
@@ -550,7 +680,13 @@
         }
         if (wasEnabled && onPlayer) {
             const songInfo = window.highway?.getSongInfo?.() || window.feedBack?.currentSong;
-            if (songInfo) _autoOpenDismissedSessionKey = _autoOpenSessionKey(songInfo);
+            if (songInfo) {
+                _autoOpenDismissedSessionKey = _autoOpenSessionKey(songInfo);
+                // Clearing an auto-opened tuner = the player tuned to this song:
+                // publish the song's tuning as their instrument's live working tuning
+                // so coverage stops nagging for it (and prompts on the way back).
+                if (wasAutoOpened) _publishWorkingTuning(songInfo);
+            }
         }
     }
 
@@ -600,6 +736,9 @@
         sessionKey: _autoOpenSessionKey,
         maybeAutoOpenOnTuningChange: _maybeAutoOpenOnTuningChange,
         coveredByPlayerInstrument: _coveredByPlayerInstrument,
+        coverageReport: _coverageReport,
+        playerTuning: _playerTuning,
+        publishWorkingTuning: _publishWorkingTuning,
         onSongLoading: _onAutoOpenSongLoadingHandler,
         getState() {
             return {

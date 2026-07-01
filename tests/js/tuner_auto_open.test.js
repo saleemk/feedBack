@@ -425,7 +425,188 @@ test('coverage: with no declared instrument it stays conservative (prompts as be
     assert.equal(sandbox.__enableCalls.length, 1);
 });
 
+// ── §4 coverage report + badge cue (E1.6) ──────────────────────────────────
+test('coverage report names the string(s) to retune', async () => {
+    // Note: report objects come from the vm sandbox realm, so compare fields, not
+    // deepStrictEqual (which checks prototype identity across realms).
+    const sandbox = createTunerSandbox({ player: PLAYER_GUITAR_8_FS });
+    const rep = (s) => sandbox.window._tunerAutoOpen.coverageReport(s);
+    const covered = await rep(E_STANDARD);
+    assert.equal(covered.covered, true);
+    assert.equal(covered.retune.length, 0);
+    assert.equal(covered.reference, false);
+    const dropA = await rep(SONG_DROP_A7);
+    assert.equal(dropA.covered, false);
+    assert.equal(dropA.retune.length, 1);
+    assert.equal(dropA.retune[0].from, 'B');   // the user's exact case → "retune B → A"
+    assert.equal(dropA.retune[0].to, 'A');
+});
+
+test('coverage report flags a whole-instrument reference mismatch', async () => {
+    const sandbox = createTunerSandbox({ player: { ...PLAYER_GUITAR_6, reference_pitch: 432 } });
+    const rep = await sandbox.window._tunerAutoOpen.coverageReport(E_STANDARD);
+    assert.equal(rep.covered, false);
+    assert.equal(rep.reference, true);
+});
+
+test('the tuner badge surfaces a passive coverage cue (badges.js)', () => {
+    const badgesSrc = fs.readFileSync(
+        path.join(__dirname, '..', '..', 'static', 'v3', 'badges.js'), 'utf8');
+    // Recomputes via the tuner plugin's coverageReport on song:ready …
+    assert.match(badgesSrc, /api\.coverageReport/);
+    assert.match(badgesSrc, /sm\.on\('song:ready'/);
+    // … and shows an advisory ring + tooltip naming the retune (it never auto-opens).
+    assert.match(badgesSrc, /function _applyCoverageCue/);
+    assert.match(badgesSrc, /report\.retune/);
+    assert.match(badgesSrc, /boxShadow/);
+});
+
 test('auto-open does not require app.js changes', () => {
     const appSrc = fs.readFileSync(APP_JS, 'utf8');
     assert.doesNotMatch(appSrc, /_tunerAutoOpen|maybeAutoOpenOnTuningChange/);
+});
+
+// ── PR 3: per-instrument live working tuning (the both-directions fix) ──────
+test('coverage reads the live per-instrument working tuning, so it prompts BOTH directions', async () => {
+    // GUITAR-6 selected; the player's LIVE working tuning is Drop-D (they retuned).
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    sandbox.window.feedBack.workingTuning = {
+        get: () => ({ offsets: [-2, 0, 0, 0, 0, 0], stringCount: 6, instrument: 'guitar', referencePitch: 440 }),
+        set() {},
+    };
+    const rep = (s) => sandbox.window._tunerAutoOpen.coverageReport(s);
+    // The Drop-D song now MATCHES the live tuning → covered (no prompt).
+    assert.equal((await rep(DROP_D)).covered, true);
+    // An E-standard song NO LONGER matches (the player is in Drop-D) → not covered →
+    // prompts to tune the low string back UP to E. The old static-profile logic missed
+    // this "coming back" direction entirely.
+    const estd = await rep(E_STANDARD);
+    assert.equal(estd.covered, false);
+    assert.equal(estd.retune.length, 1);
+    assert.equal(estd.retune[0].from, 'D');   // player low string is D…
+    assert.equal(estd.retune[0].to, 'E');     // …song wants E → "tune D → E" (up)
+});
+
+// Wire a set-capturing workingTuning stub, then run a coverage read so the tuner caches
+// the selected-instrument identity (publish is synchronous and writes to that cached
+// slot — an auto-open always runs coverage first, so this mirrors real ordering).
+async function _primeSets(sandbox, get = () => ({ offsets: null })) {
+    const sets = [];
+    sandbox.window.feedBack.workingTuning = { get, set: (state, opts) => sets.push({ state, opts }) };
+    await sandbox.window._tunerAutoOpen.playerTuning();
+    return sets;
+}
+
+test('clearing the auto-opened tuner publishes the song tuning to the right instrument slot', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 1);
+    assert.deepEqual(sets[0].state.offsets, [-2, 0, 0, 0, 0, 0]);   // the song's tuning
+    assert.equal(sets[0].state.instrument, 'guitar');
+    assert.equal(sets[0].opts.instrument, 'guitar-6');             // targets the guitar slot
+    assert.equal(sets[0].opts.provenance, 'assumed');              // a guess, not mic-verified
+});
+
+test('publish targets the SELECTED instrument slot, not a song-derived one (string-count mismatch)', async () => {
+    // A 5-string bass is selected; the cleared song is a 4-string bass chart. The publish
+    // must land in bass-5 (what coverage reads), NOT bass-4 (where it would be stranded).
+    const sandbox = createTunerSandbox({ player: { instrument: 'bass', string_count: 5, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(BASS_EADG);
+    assert.equal(sets.length, 1);
+    assert.equal(sets[0].opts.instrument, 'bass-5');   // the selected instrument's slot
+    assert.equal(sets[0].state.instrument, 'bass');
+});
+
+test('publish skips a cross-instrument chart (bass arrangement while guitar is selected)', async () => {
+    // Guitar selected, but the player manually opened the Bass arrangement and cleared.
+    // That is not evidence the guitar was retuned — do not pollute either slot.
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(BASS_EADG);
+    assert.equal(sets.length, 0);
+});
+
+test('publish carries the player reference pitch so the slot is self-consistent', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard', reference_pitch: 432 } });
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 1);
+    assert.equal(sets[0].state.referencePitch, 432);
+});
+
+test('publish skips when the instrument could not be confidently resolved (settings unreadable)', async () => {
+    // No player settings → /api/settings reports not-ok → we never cached a confident
+    // selection, so publish must NOT write to a guessed default slot.
+    const sandbox = createTunerSandbox();   // no player
+    const sets = await _primeSets(sandbox);
+    sandbox.window._tunerAutoOpen.publishWorkingTuning(DROP_D);
+    assert.equal(sets.length, 0);
+});
+
+// ── #655 fix: transactional open — a dismiss during the audio-start await must not
+// re-enable the tuner afterward (no zombie enabled-but-hidden state). See issue #675.
+test('dismiss during the audio-start await does not leave a zombie enabled tuner', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    // Minimal UI so real enable() gets past the panel-show line to the audio-start await
+    // (the default sandbox _tunerUI is a no-op that never creates uiContainer).
+    const el = () => ({
+        classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
+        querySelector: () => null, appendChild() {}, remove() {}, style: {},
+    });
+    const origTunerUI = sandbox.window._tunerUI;   // the sandbox's full no-op method set
+    sandbox.window._tunerUI = (state, actions) => {
+        const api = origTunerUI(state, actions);
+        state.uiContainer = el();
+        state.vizContainer = el();
+        state.skipBtn = el();
+        api.showMicError = api.showMicError || (() => {});
+        return api;
+    };
+    // The OPEN's audio start resolves only AFTER a ×/Skip dismiss has landed — i.e. the
+    // user dismissed while audio was starting. (disable()'s own background-audio resume
+    // is a later call and resolves at once.)
+    let firstStart = true;
+    sandbox.window._tunerAudio.start = () => {
+        if (!firstStart) return Promise.resolve();
+        firstStart = false;
+        return Promise.resolve().then(() => { sandbox.window.tuner.disable(); });
+    };
+    await sandbox.window.tuner.enable({ auto: true });
+    assert.equal(sandbox.window._tunerAutoOpen.getState().enabled, false,
+        'a mid-open dismiss must win — the tuner stays disabled, not enabled-but-hidden');
+});
+// ── #656 fix: coverage stays conservative when the instrument identity is unknown.
+// A fresh profile (/api/settings omits instrument/string_count/tuning) must NOT be
+// assumed to be standard guitar and silently suppress the prompt. See issue #677.
+test('coverage is conservative when settings carry no instrument identity', async () => {
+    const sandbox = createTunerSandbox({ player: {} });   // settings object, but no instrument fields
+    const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
+    assert.equal(covered, false, 'unknown instrument → not covered → still prompt');
+});
+
+test('a configured standard-guitar player still covers a standard song', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    const covered = await sandbox.window._tunerAutoOpen.coveredByPlayerInstrument(E_STANDARD);
+    assert.equal(covered, true, 'a known standard guitar covers a standard song (no regression)');
+});
+// ── #657 fix (#680): coverage is deduped — the auto-open gate and the badge cue both
+// call coverageReport() on the same song:ready; they must share ONE /api/settings fetch.
+test('coverage reports for the same song share one settings fetch, and a new song refetches', async () => {
+    const sandbox = createTunerSandbox({ player: { instrument: 'guitar', string_count: 6, tuning: 'Standard' } });
+    let settingsFetches = 0;
+    const origFetch = sandbox.window.fetch;
+    sandbox.window.fetch = (url) => {
+        if (String(url).includes('/api/settings')) settingsFetches += 1;
+        return origFetch(url);
+    };
+    const api = sandbox.window._tunerAutoOpen;
+    const [a, b] = await Promise.all([api.coverageReport(DROP_D), api.coverageReport(DROP_D)]);
+    assert.equal(settingsFetches, 1, 'concurrent reports for the same song share one fetch');
+    assert.deepEqual(a, b);
+    // A new song invalidates the cache → a fresh fetch.
+    api.onSongLoading();
+    await api.coverageReport(E_STANDARD);
+    assert.equal(settingsFetches, 2, 'a new song refetches');
 });

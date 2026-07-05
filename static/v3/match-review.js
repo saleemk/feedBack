@@ -511,10 +511,17 @@
     // then land on Details pre-filled for review.
     async function useTheseValues(song, cand) {
         if (!cand) return;
+        // Smart adopt for an English base: KEEP the readable name + title the card
+        // already shows (the author's romaji, e.g. "Junko Yagami / BAY CITY") — the
+        // match is often native script (kanji/kana). Take only what the pack lacks
+        // — album / year / genre — from the match; the pin below still brings the
+        // correct art + identity. The user can still edit any field.
         song._pendingDetails = {
-            title: String(cand.title || ''), artist: String(cand.artist || ''),
-            album: String(cand.album || ''), year: String(cand.year || ''),
-            genre: (Array.isArray(cand.genres) && cand.genres[0]) ? String(cand.genres[0]) : String(cand.genre || ''),
+            artist: String(song.artist || cand.artist || ''),
+            title:  String(song.title  || cand.title  || ''),
+            album:  String(cand.album  || song.album  || ''),
+            year:   String(cand.year   || song.year   || ''),
+            genre:  String((Array.isArray(cand.genres) && cand.genres[0]) || cand.genre || ''),
         };
         try {
             await post('/api/enrichment/review/' + enc(song.filename) + '/pick', { candidate: cand });

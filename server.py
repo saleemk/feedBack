@@ -1266,6 +1266,18 @@ class MetadataDB:
                 out.setdefault(fn, {})[field] = {"value": value, "locked": bool(locked)}
         return out
 
+    def _romaji_display(self, filename: str, artist: str, title: str):
+        """English-base display fallback. A blank-artist CDLC pack named
+        'Artist_Title_v1_p' has no readable name (artist blank; title = the raw
+        filename), and a match would fill it with the artist's NATIVE script
+        (kanji/kana). Surface the author's own romaji parsed from the filename
+        instead, so an English base reads 'Junko Yagami - BAY CITY'. Only kicks in
+        when the pack has no artist of its own — a real pack artist is untouched."""
+        if (artist or "").strip():
+            return artist, title
+        d = _artist_title_from_filename(filename)
+        return (d["artist"], d["title"]) if d else (artist, title)
+
     def pack_fields(self, filename: str) -> dict:
         """The stored (pack) values for the overridable catalog fields — the
         Fix-metadata popup shows these behind each override as the 'revert to
@@ -1275,7 +1287,11 @@ class MetadataDB:
         row = self.conn.execute(
             "SELECT title, artist, album, year, genre FROM songs WHERE filename = ?",
             (filename,)).fetchone()
-        return {k: ((row[i] or "") if row else "") for i, k in enumerate(keys)}
+        vals = {k: ((row[i] or "") if row else "") for i, k in enumerate(keys)}
+        # Baseline the author's romaji (from the filename) for a blank-artist pack,
+        # so the Details tab's Pack reference matches what the grid shows.
+        vals["artist"], vals["title"] = self._romaji_display(filename, vals["artist"], vals["title"])
+        return vals
 
     # Effective genre = a per-song genre OVERRIDE (Fix-metadata popup) else the
     # scanned pack genre. Applied at FILTER/FACET time (like the P4 artist alias)
@@ -4215,6 +4231,17 @@ class MetadataDB:
             s["unmatched"] = s["filename"] in um
             if amap:
                 s["artist"] = amap.get((s.get("artist") or "").lower(), s.get("artist"))
+            # English-base romaji fallback: a blank-artist CDLC pack shows nothing
+            # useful (artist blank; title = the raw filename). Surface the author's
+            # romaji from the "Artist_Title_v1_p" filename so the card reads
+            # "Junko Yagami — BAY CITY", never blank or native script. Display-only;
+            # a user override (below) still wins. Keyset-safe: stash the raw title
+            # for the cursor before replacing it.
+            if not (s.get("artist") or "").strip():
+                r_artist, r_title = self._romaji_display(s["filename"], s.get("artist"), s.get("title"))
+                if r_title != s.get("title") and "_sort_title" not in s:
+                    s["_sort_title"] = s["title"]
+                s["artist"], s["title"] = r_artist, r_title
             # Override wins over the pack AND the alias re-label — it's the user's
             # explicit per-song choice. Only a non-empty override VALUE replaces a
             # cell; a lock-only row (value None) leaves the displayed value alone.
@@ -4224,7 +4251,7 @@ class MetadataDB:
                     cell = ov.get(field)
                     val = cell.get("value") if cell else None
                     if val:
-                        if field == "title":
+                        if field == "title" and "_sort_title" not in s:
                             s["_sort_title"] = s["title"]   # raw title, for the keyset cursor
                         s[field] = val
         # Grouped rows carry the ⚑ N (chart_count) + the work_key from the

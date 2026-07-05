@@ -233,6 +233,24 @@ def test_lock_only_genre_does_not_change_facet(server):
     assert server.meta_db._effective_genre_expr() == "genre"
 
 
+def test_romaji_fallback_for_blank_artist_pack(server):
+    fn = "CDLC/0 - City Pop/Junko-Yagami_BAY-CITY_v1_p.feedpak"
+    _put(server, fn, title="Junko-Yagami_BAY-CITY_v1_p", artist="")   # scanner fell back to the filename
+    s = {x["filename"]: x for x in server.meta_db.query_page()[0]}[fn]
+    # the grid shows the author's romaji, not blank / the raw filename / kanji
+    assert s["artist"] == "Junko Yagami"
+    assert s["title"] == "BAY CITY"
+    # the Details baseline (pack_fields) matches, so the popup agrees with the grid
+    pack = server.meta_db.pack_fields(fn)
+    assert pack["artist"] == "Junko Yagami" and pack["title"] == "BAY CITY"
+
+
+def test_romaji_fallback_left_alone_when_pack_has_artist(server):
+    _put(server, "a.archive", title="Real Title", artist="Real Artist")
+    s = {x["filename"]: x for x in server.meta_db.query_page()[0]}["a.archive"]
+    assert s["artist"] == "Real Artist" and s["title"] == "Real Title"
+
+
 def test_title_keyset_paging_is_complete_with_overrides(client, server):
     # Raw titles A/B/C → title-sort order is A, B, C on the RAW column.
     _put(server, "b.archive", title="B")

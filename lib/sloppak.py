@@ -703,20 +703,29 @@ def load_song(
                     and isinstance(e.get("d"), (int, float))
                 ]
                 if song.lyrics:
-                    # Provenance — populated by the converter (xml/notechart),
-                    # the WhisperX fallback (whisperx), or hand-edits
-                    # (user). Validate against the closed enum so a
-                    # hand-edited (or otherwise malformed) manifest can't
-                    # propagate a YAML dict / list / arbitrary string
-                    # into the highway WS `lyrics.source` field and out
-                    # to plugin badges. Anything outside the enum (or
-                    # the wrong type) falls back to "xml" — the spec's
-                    # back-compat default — instead of being stringified
-                    # and trusted.
-                    _ALLOWED_LYRICS_SOURCES = {"xml", "notechart", "whisperx", "user"}
-                    # Legacy alias: older manifests labelled note-chart-derived
-                    # lyrics with the source format's name; normalise it.
-                    _LYRICS_SOURCE_ALIASES = {"sng": "notechart"}
+                    # Provenance. The feedpak spec (§7.1) vocabulary is
+                    # {authored, transcribed, user}; older manifests + the
+                    # in-tree readers also use the source-format names
+                    # (xml/notechart) and the WhisperX engine name
+                    # (whisperx). Accept the union so both spec-compliant
+                    # writers (e.g. the stem_splitter plugin emitting
+                    # `transcribed`) and legacy packs validate. Validate
+                    # against the closed enum so a hand-edited (or otherwise
+                    # malformed) manifest can't propagate a YAML dict / list /
+                    # arbitrary string into the highway WS `lyrics.source`
+                    # field and out to plugin badges. Anything outside the
+                    # enum (or the wrong type) falls back to "xml" — the
+                    # back-compat default — instead of being stringified and
+                    # trusted.
+                    _ALLOWED_LYRICS_SOURCES = {
+                        "xml", "notechart", "whisperx", "user",
+                        "authored", "transcribed",
+                    }
+                    # Legacy aliases: older manifests labelled note-chart-derived
+                    # lyrics with the source format's name, and the WhisperX
+                    # fallback with the engine name — normalise both to the
+                    # spec vocabulary the badges now expect.
+                    _LYRICS_SOURCE_ALIASES = {"sng": "notechart", "whisperx": "transcribed"}
                     raw_source = manifest.get("lyrics_source")
                     if isinstance(raw_source, str):
                         raw_source = _LYRICS_SOURCE_ALIASES.get(raw_source, raw_source)

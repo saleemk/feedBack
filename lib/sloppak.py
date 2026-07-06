@@ -717,8 +717,11 @@ def load_song(
                     # enum (or the wrong type) falls back to "xml" — the
                     # back-compat default — instead of being stringified and
                     # trusted.
+                    # Post-alias values only: `whisperx` is normalised to
+                    # `transcribed` before the membership check below, so (like
+                    # `sng`) it is intentionally absent from this set.
                     _ALLOWED_LYRICS_SOURCES = {
-                        "xml", "notechart", "whisperx", "user",
+                        "xml", "notechart", "user",
                         "authored", "transcribed",
                     }
                     # Legacy aliases: older manifests labelled note-chart-derived

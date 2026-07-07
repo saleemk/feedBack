@@ -1348,16 +1348,23 @@ class MetadataDB:
         return [{"tag": r[0], "count": r[1]} for r in rows]
 
     def user_meta_map(self, filenames) -> dict:
-        """Batch {filename: user_difficulty} for a page of rows (set values
-        only). Lets query_page embed difficulty without an N+1."""
+        """Batch {filename: user_difficulty} for a set of rows (set values
+        only). Lets query_page / query_artists embed difficulty without an
+        N+1. Chunked under SQLite's variable limit — query_artists can pass
+        every song across 50 artists, well past a single IN (...)."""
         fns = list(filenames)
-        if not fns:
-            return {}
-        ph = ",".join("?" * len(fns))
-        rows = self.conn.execute(
-            f"SELECT filename, user_difficulty FROM song_user_meta "
-            f"WHERE filename IN ({ph}) AND user_difficulty IS NOT NULL", fns).fetchall()
-        return {r[0]: r[1] for r in rows}
+        out: dict = {}
+        for i in range(0, len(fns), 400):
+            chunk = fns[i:i + 400]
+            if not chunk:
+                break
+            ph = ",".join("?" * len(chunk))
+            rows = self.conn.execute(
+                f"SELECT filename, user_difficulty FROM song_user_meta "
+                f"WHERE filename IN ({ph}) AND user_difficulty IS NOT NULL", chunk).fetchall()
+            for fn, diff in rows:
+                out[fn] = diff
+        return out
 
     def tags_map(self, filenames) -> dict:
         """Batch {filename: [tags]} for a page of rows."""
@@ -4107,6 +4114,18 @@ class MetadataDB:
                 "((SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) IS NULL) ASC, "
                 "(SELECT MAX(best_accuracy) FROM song_stats s WHERE s.filename = songs.filename) DESC"
             ),
+            # Personal difficulty rating (song_user_meta.user_difficulty, 1..5 —
+            # manually set or seeded by the difficulty_tagger plugin), via a
+            # correlated subquery like mastery above (drops to OFFSET paging).
+            # Unrated songs push to the bottom in both directions.
+            "difficulty": (
+                "((SELECT user_difficulty FROM song_user_meta u WHERE u.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT user_difficulty FROM song_user_meta u WHERE u.filename = songs.filename) ASC"
+            ),
+            "difficulty-desc": (
+                "((SELECT user_difficulty FROM song_user_meta u WHERE u.filename = songs.filename) IS NULL) ASC, "
+                "(SELECT user_difficulty FROM song_user_meta u WHERE u.filename = songs.filename) DESC"
+            ),
         }
         if group and sort in ("mastery", "mastery-desc"):
             # Sort law (§7.1): mastery aggregates MAX across the WHOLE group —
@@ -4381,6 +4400,11 @@ class MetadataDB:
         from collections import OrderedDict
         estd = self._estd_set()
         favs = self.favorite_set()
+        # Personal difficulty rides along here too (feedBack#810 follow-up),
+        # same batched pattern as query_page — without this the tree view's
+        # difficulty badge silently never renders (song.user_difficulty was
+        # always undefined for every row).
+        udm = self.user_meta_map([r[0] for r in rows])
         artists = OrderedDict()
         for r in rows:
             artist = r[2] or "Unknown Artist"
@@ -4402,6 +4426,7 @@ class MetadataDB:
                 "tuning_name": r[12] or "",
                 "has_estd": r[0] in estd,
                 "favorite": r[0] in favs,
+                "user_difficulty": udm.get(r[0]),
             })
 
         # Pick most common name variant per artist/album

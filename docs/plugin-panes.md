@@ -153,28 +153,115 @@ launch. In a **browser** it comes back **docked** — a browser blocks
 
 ---
 
-## Things worth knowing
+## Best practices
 
-1. **Your code still runs in the main window.** The element is displayed in the
-   pane window, but its closures, its timers and its `document` references all
-   still belong to the main realm. That is exactly why everything keeps working —
-   but it means a `document.body.appendChild()` inside your panel (a tooltip, a
-   popover) lands in the **main** window, not the pane. Anchor such things to the
-   panel itself, not to `document.body`.
+Every item below is something that has already gone wrong, in this codebase, on
+this feature. They are cheap to get right up front and confusing to diagnose later
+— a broken pane usually *looks* perfect.
 
-2. **Chromium throttles a backgrounded window's `requestAnimationFrame`.** While
-   the user is looking at your pane, the main window may be in the background —
-   and your rAF lives there. Event-driven panels (sliders, buttons, presets) are
-   unaffected. A panel that *animates* continuously may run slowly while it's the
-   only thing you're looking at.
+### 1. Your code still runs in the main window
 
-3. **The element goes home exactly where it came from** — same parent, same
-   position among its siblings. Don't move it yourself while it's popped out.
+The element is *displayed* in the pane window, but its closures, its timers and its
+`document` references all still belong to the main realm. **That is precisely why
+everything keeps working** — and it has one sharp consequence:
 
-4. **A pane the user closed with the window's X button is reaped** (a crashed
-   renderer never gets to say goodbye), and your element is docked back. Without
-   that, your panel would be stranded in a dead document with no way back.
+```js
+// WRONG — lands in the MAIN window, not the pane the user is looking at.
+document.body.appendChild(myTooltip);
 
-5. **Nothing here is required.** On a host without the panes API, `feedBack.panes`
-   is undefined, you skip both calls, and your panel behaves exactly as it does
-   today.
+// RIGHT — anchored to the panel, so it travels with it.
+panelEl.appendChild(myTooltip);
+```
+
+Same for measuring. `window.innerWidth` is the *main* window's. Use
+`el.ownerDocument.defaultView` when you need the window your panel is actually in.
+
+### 2. Don't hide your panel yourself
+
+Core hides it and leaves a "bring it back" stub. If your plugin *also* hides it,
+you are hiding the node that just moved — and the pane window renders nothing.
+(This is not hypothetical: core's own chip did exactly this, and the first
+pop-out shipped blank because of it.)
+
+### 3. Prefer `hidden` or a class for show/hide
+
+Core makes your panel visible while it's hosted — it clears `hidden`, and clears an
+inline `display: none` if that's how you hide — and **restores both on dock**. So
+either style works.
+
+`hidden` is still the better choice: it composes with everything, and it leaves
+your panel's `display` mode (`flex`, `grid`, whatever it is) entirely alone. Core
+deliberately does not override `display` for exactly that reason.
+
+```js
+panel.hidden = true;                  // best
+panel.style.display = 'none';         // works — core saves and restores it
+```
+
+### 4. `element` is a function — return the *live* node
+
+It is resolved when the pane opens, not when you register. Plugins build panels
+lazily, and rebuild them wholesale (Camera Director rebuilds on every mode
+change). If you rebuild yours, **re-attach the chip**:
+
+```js
+if (chipDetach) chipDetach();            // attachChip returns a detach()
+chipDetach = feedBack.panes.attachChip(panel, PANE_ID, { header: toolsEl });
+```
+
+Call `chipDetach()` in your teardown too, or you leave a stub pointing at DOM that
+no longer exists.
+
+### 5. `isConnected` does not mean "docked"
+
+A panel sitting in a pane window is **connected** — just not to *this* document.
+Code that asks "am I still mounted?" with `isConnected` will get `true` and act on
+a panel that is somewhere else entirely.
+
+```js
+const docked = el.ownerDocument === document;   // this is the question you meant
+```
+
+Or take the optional `onHost(hostId, el)` callback, which fires on both moves.
+
+### 6. Expect rAF to be throttled while your pane has focus
+
+Chromium throttles a **backgrounded** window's `requestAnimationFrame` — and the
+main window is exactly what's backgrounded while the user is looking at your pane.
+Your rAF lives in the main window.
+
+Event-driven panels (sliders, buttons, presets) don't care. A panel that
+*animates continuously* may run slowly precisely when it's the only thing on
+screen. Drive such animation from data you already have, or accept the stutter.
+
+### 7. Don't synchronise anything
+
+No `BroadcastChannel`, no `postMessage`, no second copy of your state, no mirrored
+UI. There is **one** realm and **one** panel. If you find yourself writing sync
+code, you have misunderstood the model — the whole point is that there is nothing
+to sync.
+
+### 8. Nothing here is required
+
+On a host without the panes API, `feedBack.panes` is `undefined`. Skip both calls
+and your panel behaves exactly as it does today. Guard, don't depend:
+
+```js
+const panes = window.feedBack && window.feedBack.panes;
+if (!panes || typeof panes.register !== 'function') return;
+```
+
+---
+
+## Things core guarantees
+
+- **The element goes home exactly where it came from** — same parent, same position
+  among its siblings. Don't move it yourself while it's popped out.
+- **It comes home alive.** Core evacuates the element *before* the pane window's
+  document is destroyed. (Get this wrong — dock after the window dies — and the
+  node returns looking perfect with every listener in its subtree silently gone.
+  That bug is why this section exists.)
+- **A pane window the user closes, or that crashes, is reaped** and the element
+  docked back. Your panel is never stranded in a dead document.
+- **The app's stylesheets are copied into the pane window**, so your panel looks
+  identical — including your plugin's own `styles` sheet.

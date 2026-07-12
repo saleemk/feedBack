@@ -465,6 +465,40 @@ window.feedBack.diagnostics.contribute('my_plugin', {
 
 Loaded from `static/diagnostics.js` ASAP in `<head>` so the console-wrap is in place before any other script runs. Available on the `window.feedBack.diagnostics` namespace alongside `snapshotConsole()`, `snapshotHardware()`, `snapshotUa()`, `snapshotLocalStorage()`, `snapshotContributions()`. Keep your payload small (< 100 KB) and don't include secrets — bundles are shared with maintainers.
 
+### Detachable panes — pop your panel out into its own window
+
+If your plugin has a floating panel that sits over the player — a mixer, a camera rig, a settings board — you can let the user pop it out into its own OS window and leave it there: while they play, across song switches, on a second monitor, minimized to the tray. Two calls:
+
+```js
+feedBack.panes.register({
+    id: 'camera_director',
+    title: 'Camera Director',
+    icon: '🎥',
+    element: () => panelEl,          // your existing panel, exactly as it is
+});
+feedBack.panes.attachChip(panelEl, 'camera_director');
+```
+
+**The host moves your real element.** Not a copy, not a re-render — the actual DOM node, adopted into the pop-out window, keeping its listeners and its closures. Your panel goes on running *your* code against *your* state. It looks and behaves like what was popped out because it **is** what was popped out. Nothing to mirror, nothing to keep in sync.
+
+The rules below are all things that have already gone wrong. Full contract: **[docs/plugin-panes.md](docs/plugin-panes.md)**.
+
+- **Your code still runs in the main window.** The element is *displayed* elsewhere; its closures, timers and `document` references still belong to the main realm. That is exactly why everything keeps working — and exactly why `document.body.appendChild(myPopover)` lands in the **main window, not the pane**. Anchor tooltips, popovers and menus to your panel, not to `document.body`. Measure with `el.ownerDocument.defaultView`, never a cached `window`.
+
+- **Don't hide your panel yourself when it pops out.** Core hides it and leaves a "bring it back" stub. If you also hide it, you will hide the node that just moved — and blank the pane window.
+
+- **Prefer `hidden` or a class over inline `display` for show/hide.** While popped out, core neutralises *placement* with `.fb-paned` (`position`, `inset`, `width`, `z-index`, `box-shadow`). An inline `display:none` on your panel reasserts itself the moment the pane docks back and the class is removed, so your panel returns invisible.
+
+- **`element` is a function so it can be resolved late.** Return the *live* node. If you rebuild your panel (Camera Director rebuilds on every mode change), re-run `attachChip` — it returns a `detach()`; call it before re-attaching, and again in your teardown.
+
+- **`isConnected` does not mean "docked".** A panel sitting in a pane window is very much connected — just not to *this* document. Test `el.ownerDocument === document`, or take the `onHost(hostId, el)` callback.
+
+- **rAF is throttled while the main window is backgrounded** — and it will be, whenever the user is looking at your pane. Event-driven panels (sliders, buttons) are unaffected. A panel that *animates continuously* may run slowly while it is the only thing on screen.
+
+- **Don't reach for BroadcastChannel, `postMessage`, or a second copy of your state.** There is one realm and one panel. If you find yourself synchronising, you have misunderstood the model.
+
+- **Nothing is required.** No panes API on the host → skip both calls, and your panel behaves exactly as it does today.
+
 ### Keyboard Shortcuts
 
 Plugins can register keyboard shortcuts via the global `window.registerShortcut()` function. Shortcuts appear in the `?` help panel.

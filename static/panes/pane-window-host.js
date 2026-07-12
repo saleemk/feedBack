@@ -55,7 +55,13 @@
     // Cloned rather than shared: a <link> node can only live in one document, and
     // we are not about to steal the app's own stylesheet out of its head.
     function _copyStyles(doc) {
+        // pane.html already links panes.css, so don't clone a second copy of it —
+        // duplicate sheets cost a redundant fetch and an extra style recalc for no
+        // change in appearance.
+        const have = new Set(
+            Array.from(doc.querySelectorAll('link[rel="stylesheet"]')).map((l) => l.href));
         document.querySelectorAll('link[rel="stylesheet"], style').forEach((node) => {
+            if (node.tagName === 'LINK' && have.has(node.href)) return;
             try { doc.head.appendChild(node.cloneNode(true)); } catch (e) { /* skip a node we can't clone */ }
         });
         // Carry the theme/scale hooks the app hangs on <html> and <body>. v3 keys
@@ -150,10 +156,6 @@
         // casting a drop shadow over nothing. Neutralise the *placement* while
         // touching nothing else about how it looks.
         el.classList.add('fb-paned');
-        // Some panels are hidden until opened (Camera Director's is `hidden` until
-        // you click its launcher). It is being shown on purpose now.
-        el.hidden = false;
-
         root.appendChild(doc.adoptNode(el));
         doc.title = spec.title + ' — fee[dB]ack';
 

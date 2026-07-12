@@ -88,14 +88,22 @@
     // a wrapper, a launcher row — that element is still here, and we hide it as
     // before.
     function _onOpened(rec, detail) {
-        // "Moved" means the element is not in THIS document — either because this
-        // open took it, or because it is already sitting in a pane window from an
-        // earlier one. The ownerDocument test is what makes re-attaching a chip
-        // safe: a plugin that rebuilds its panel (Camera Director does, on every
-        // mode change) re-runs attachChip while the pane is still popped out, and
-        // an isConnected test would say "still here" — it IS connected, to the pane
-        // window — and we would stamp display:none onto the live pane.
-        const moved = (detail && detail.el === rec.el) || rec.el.ownerDocument !== document;
+        // Did the pane take MY element?
+        //
+        // Ask the manager, which knows exactly what it handed to the host. Do not
+        // try to infer it from the element:
+        //
+        //   - `isConnected` says "still here" for a panel sitting in a pane window.
+        //     It IS connected — to that window.
+        //   - `ownerDocument` says "still here" for a panel moved into the DOCK,
+        //     which is in this very document. Hiding it there would blank a pane the
+        //     user is looking at.
+        //
+        // Both were live bugs. The manager's answer is the only one that holds for
+        // every host, and it works when reconciling after the fact (detail == null),
+        // which is what a plugin rebuilding its panel mid-pop-out triggers.
+        const takenEl = (detail && detail.el) || panes.elementOf(rec.spec.id);
+        const moved = takenEl === rec.el;
 
         if (!moved && rec.el.isConnected) {
             rec.el.classList.add('fb-pane-detached');

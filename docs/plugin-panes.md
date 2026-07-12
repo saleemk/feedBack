@@ -46,10 +46,12 @@ if (panes && typeof panes.register === 'function') {
 ```
 
 `attachChip()` injects **the** standard pop-out chip (`⇱`) — same glyph, same
-place, same behaviour in every plugin. Clicking it moves your panel into a window
-and leaves a "⇲ … is popped out" stub in its place; clicking the stub brings it
-back, to exactly the spot it left. Core owns the chip, the hiding and the stub, so
-you write no show/hide logic.
+place, same behaviour in every plugin. Clicking it moves your panel to whichever
+**host** the router picks — usually a pop-out window, but the dock when a window
+can't be had (a blocked pop-up, or `defaultHost: 'dock'`) — and leaves a
+"⇲ … is popped out" stub in its place. Clicking the stub brings the panel back, to
+exactly the spot it left. Core owns the chip, the hiding and the stub, so you write
+no show/hide logic.
 
 That's it. Your sliders, your presets, your tabs, your CSS, your event handlers,
 your state — all of it comes along, because none of it moved anywhere except into
@@ -74,22 +76,36 @@ chipDetach = panes.attachChip(panel, PANE_ID, { header: toolsEl });
 Re-attaching is safe while the pane is popped out: the chip reconciles against the
 pane's real state, so a panel rebuilt mid-pop-out stays correctly stubbed.
 
-### The one thing core changes about your element
+### The two things core changes about your element
 
-`.fb-paned` is added while the pane is out, and it neutralises **placement only**:
+**1. Placement.** `.fb-paned` is added while the pane is out:
 
 ```css
-position: static; inset: auto; width: 100%;
+position: static; inset: auto; margin: 0; width: 100%;
 max-width: none; max-height: none; z-index: auto; box-shadow: none;
 ```
 
 Your panel was almost certainly a fixed overlay pinned to a corner of the app
 (`position:fixed; top:72px; right:18px; width:288px`). Alone in its own window,
 every one of those is wrong — it would float 72px down from the top of a 380px
-window, still 288px wide, still casting a shadow over nothing. Colours, borders,
-radius, padding, fonts and your panel's own internal layout are untouched.
+window, still 288px wide, still casting a shadow over nothing.
 
-The class is removed the moment the element goes home.
+Note there is deliberately **no `display` override**: a panel that is
+`display:flex` or `grid` stays that way. Colours, borders, radius, padding, fonts
+and your panel's own internal layout are untouched.
+
+**2. Visibility.** A panel is usually hidden until its launcher is clicked, and a
+pane can be opened from the tray or the rail without that ever happening — so core
+un-hides it, in the two ways a panel is actually hidden:
+
+```js
+el.hidden = false;
+if (el.style.display === 'none') el.style.display = '';
+```
+
+**Both are restored exactly as they were when the pane docks**, along with the
+`.fb-paned` class. A panel that was closed when you opened its pane from the tray
+goes back to being closed; one that was open stays open.
 
 ---
 
@@ -113,8 +129,9 @@ feedBack.panes.open(id, { host }) / close(id) / detach(id) / dock(id) / focus(id
 feedBack.panes.isOpen(id) / hostOf(id) / get(id) / list()
 ```
 
-`attachChip` puts the chip in `el.querySelector('[data-pane-header]')` if it finds
-one, or in the `header` element you pass, or at the top of `el` otherwise.
+`attachChip` puts the chip in the `header` element you pass, else in
+`el.querySelector('[data-pane-header]')` if it finds one, else at the top of `el`.
+An explicit `header` always wins.
 
 ---
 

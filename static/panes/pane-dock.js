@@ -77,7 +77,6 @@
         // pinned to a corner of the app, and inside a card that positioning is
         // nonsense. .fb-paned unpins it and nothing else.
         el.classList.add('fb-paned');
-        el.hidden = false;
         body.appendChild(el);
 
         card.appendChild(head);

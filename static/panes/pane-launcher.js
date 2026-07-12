@@ -25,6 +25,14 @@
         if (!listEl || !listEl.isConnected) listEl = document.getElementById('v3-rail-panes-list');
         if (!listEl) return;
         const all = panes.list();
+
+        // Toggling a pane from this list fires panes:opened/closed, which re-renders
+        // the list — destroying the very button the user just pressed and dropping
+        // focus to <body>. Remember which one had it and give it back, so keyboard
+        // and screen-reader users can toggle several panes without losing their place.
+        const focusedId = (listEl.contains(document.activeElement) && document.activeElement.dataset)
+            ? document.activeElement.dataset.paneId : null;
+
         listEl.replaceChildren();
 
         if (!all.length) {
@@ -39,6 +47,7 @@
             const b = document.createElement('button');
             b.type = 'button';
             b.className = 'v3-pop-btn';
+            b.dataset.paneId = p.id;
             b.setAttribute('aria-pressed', p.open ? 'true' : 'false');
             b.textContent = (p.open ? '● ' : '○ ') + p.icon + ' ' + p.title;
             b.addEventListener('click', (e) => {
@@ -46,6 +55,7 @@
                 if (panes.isOpen(p.id)) panes.close(p.id); else panes.detach(p.id);
             });
             listEl.appendChild(b);
+            if (p.id === focusedId) b.focus();
         });
     }
 

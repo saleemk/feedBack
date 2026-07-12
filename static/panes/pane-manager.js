@@ -135,14 +135,30 @@
         // the pane window, which then renders nothing at all.
         el.classList.remove('fb-pane-detached');
 
+        // Make it visible, and remember exactly how it wasn't.
+        //
+        // A plugin's panel is usually hidden until its launcher is clicked, and a
+        // pane can be opened from the tray or the rail without that ever happening.
+        // So we un-hide it — but only in the two ways a panel is actually hidden
+        // (`hidden`, or an inline `display:none`), and we put both back on dock.
+        //
+        // Note what we do NOT do: force a `display`. A panel that is `display:flex`
+        // must stay flex. Neutralising placement is one thing; silently re-laying
+        // out someone's panel is another.
+        const vis = { hidden: el.hidden, display: el.style.display };
+        el.hidden = false;
+        if (el.style.display === 'none') el.style.display = '';
+
         try {
             host.place(spec, el);
         } catch (e) {
             console.error('[panes] host', host.id, 'failed to take', id, e);
+            el.hidden = vis.hidden;
+            el.style.display = vis.display;
             return false;
         }
 
-        open.set(id, { spec, hostId: host.id, el, home });
+        open.set(id, { spec, hostId: host.id, el, home, vis });
         if (opts.remember !== false) _rememberHost(id, host.id);
         if (spec.onHost) { try { spec.onHost(host.id, el); } catch (e) { console.error('[panes]', id, 'onHost threw', e); } }
         // `home` rides along because the element has LEFT this document — anything
@@ -206,6 +222,14 @@
 
         const host = hosts.get(entry.hostId);
         try { if (host) host.unplace(id, entry.el); } catch (e) { console.error('[panes] host', entry.hostId, 'threw releasing', id, e); }
+
+        // Put its visibility back exactly as we found it. A panel that was closed
+        // when the pane was opened from the tray goes back to being closed; one that
+        // was open stays open. We forced it visible; we un-force it.
+        if (entry.vis) {
+            entry.el.hidden = entry.vis.hidden;
+            entry.el.style.display = entry.vis.display;
+        }
 
         if (opts.remember !== false) _rememberHost(id, null);
         if (entry.spec.onHost) { try { entry.spec.onHost(null, entry.el); } catch (e) { /* non-fatal */ } }
@@ -298,6 +322,10 @@
         // Where an open pane's element came from. The chip needs this to mark the
         // hole the element left, since it can no longer ask the element itself.
         homeOf: (id) => { const e = open.get(id); return e ? e.home : null; },
+        // The element a host actually took. The chip needs this to tell "the pane
+        // took MY element" from "the pane took something else" — and it cannot ask
+        // the element, which may now be in a dock card or another window entirely.
+        elementOf: (id) => { const e = open.get(id); return e ? e.el : null; },
         get: (id) => specs.get(id) || null,
         list: () => Array.from(specs.values()).map((s) => ({
             id: s.id, title: s.title, icon: s.icon,

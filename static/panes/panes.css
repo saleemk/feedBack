@@ -34,8 +34,12 @@
     max-height: none !important;
     z-index: auto !important;
     box-shadow: none !important;
-    /* A panel hidden until its launcher is clicked is being shown on purpose now. */
-    display: block !important;
+    /* Deliberately NO `display` override. Forcing `display:block` would silently
+       re-lay-out a panel that is `display:flex` or `grid` — which is the opposite
+       of "placement only", and exactly the kind of surprise this feature exists to
+       avoid. Making a hidden panel visible is the manager's job (it clears the
+       element's `hidden`/inline `display:none` on open and restores them on dock),
+       and it does it without touching the panel's own display mode. */
 }
 
 /* ── The pop-out chip ────────────────────────────────────────────────────── */

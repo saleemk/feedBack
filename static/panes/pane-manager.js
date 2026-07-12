@@ -168,17 +168,40 @@
         // Adopt first, while the pane window is still alive, and the node moves out
         // of a living document into a living document, which is the only case the
         // DOM actually guarantees.
-        const home = entry.home;
-        if (home && home.parent && home.parent.isConnected) {
-            try {
-                // adoptNode, not appendChild: the node's owner is currently the pane
-                // window's document, and adopting is what transfers ownership back.
-                const node = document.adoptNode(entry.el);
+        // ADOPT UNCONDITIONALLY, INSERT CONDITIONALLY. The rescue and the
+        // re-homing are two different jobs, and only one of them is allowed to
+        // fail.
+        //
+        // Adopting is what saves the element: it transfers ownership away from the
+        // pane window's document, so that document can be destroyed without taking
+        // the listeners with it. Do that FIRST, and always — even when there is
+        // nowhere to put the element afterwards.
+        //
+        // Re-homing can legitimately be impossible: the panel may never have had a
+        // parent (a plugin that builds it lazily and hands it straight to us), or
+        // its container may have been torn down while the pane was out (a screen
+        // change). Gating the adopt on a reachable home would mean that in exactly
+        // those cases we leave the element inside a window we are about to close —
+        // which is the "comes home dead" failure this whole ordering exists to
+        // prevent. It just moves it from the common path to the rare one, where it
+        // is far harder to spot.
+        //
+        // With no home, the element ends up owned by this document but not in it:
+        // detached, intact, listeners alive, and ready for the plugin to re-insert
+        // whenever it rebuilds its UI.
+        try {
+            // adoptNode, not appendChild: the node's owner is currently the pane
+            // window's document, and adopting is what transfers ownership back.
+            const node = document.adoptNode(entry.el);
+            const home = entry.home;
+            if (home && home.parent && home.parent.isConnected) {
                 if (home.next && home.next.parentNode === home.parent) home.parent.insertBefore(node, home.next);
                 else home.parent.appendChild(node);
-            } catch (e) {
-                console.error('[panes] could not return', id, 'to its home', e);
+            } else {
+                console.warn('[panes]', id, 'has no home to return to — the element is detached but intact');
             }
+        } catch (e) {
+            console.error('[panes] could not bring', id, 'back out of its pane window', e);
         }
 
         const host = hosts.get(entry.hostId);

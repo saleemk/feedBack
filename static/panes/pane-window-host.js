@@ -61,10 +61,19 @@
         // Carry the theme/scale hooks the app hangs on <html> and <body>. v3 keys
         // off these for its colour tokens and interface scale, and a panel that
         // lands without them renders in the wrong palette at the wrong size.
+        //
+        // MERGE, don't assign: pane.html sets `class="fb-pane-window"` on <html>,
+        // and panes.css hangs the pane window's own chrome off it. Overwriting the
+        // class list would take that with it and the window would lose its own
+        // layout — the app's classes and the pane document's are both wanted.
         try {
-            doc.documentElement.className = document.documentElement.className;
-            doc.documentElement.setAttribute('style', document.documentElement.getAttribute('style') || '');
-            doc.body.className = document.body.className;
+            document.documentElement.classList.forEach((c) => doc.documentElement.classList.add(c));
+            document.body.classList.forEach((c) => doc.body.classList.add(c));
+            // The inline style on <html> carries the interface-scale custom property
+            // (--fb-scale). Merge it in rather than replacing the attribute, for the
+            // same reason.
+            const scale = document.documentElement.style.cssText;
+            if (scale) doc.documentElement.style.cssText += ';' + scale;
         } catch (e) { /* non-fatal */ }
     }
 
@@ -168,26 +177,6 @@
             if (panes.isOpen(spec.id)) panes.close(spec.id);
         });
 
-        // THE ELEMENT MUST LEAVE BEFORE THE DOCUMENT DIES.
-        //
-        // When the user closes a pane window, its document is torn down — and the
-        // panel is inside it. The node itself survives (we hold a reference) and
-        // comes home looking perfect: right markup, right classes, right size. But
-        // it comes home DEAD: every event listener in the subtree is gone with the
-        // document that hosted them. A panel that renders and does nothing.
-        //
-        // The `closed` poll cannot save us: by the time `w.closed` is true, the
-        // document is already gone. `beforeunload` fires while it is still alive, so
-        // this is the last moment we can get the element out — and panes.close()
-        // adopts it back into the main document synchronously.
-        //
-        // We attach it HERE, not when the window was opened: back then the window
-        // still held its throwaway about:blank document, and a listener registered
-        // on that is discarded when /pane replaces it.
-        w.addEventListener('beforeunload', () => {
-            if (panes.isOpen(spec.id)) panes.close(spec.id);
-        });
-
         // Measure LATE. The pane window has not laid out yet at this point (it is
         // still being created and shown), so anything read now reports 0x0 whether
         // or not there is a real problem.
@@ -245,11 +234,9 @@
             panes.close(spec.id);       // never strand the element in a dead window
         });
 
-        // Note there is no 'beforeunload' listener on the popup. A listener added
-        // now would be attached to its throwaway about:blank window and thrown away
-        // with it when /pane loads. The `closed` poll above is what notices the user
-        // shutting a pane window — and it has to be, since a crashed renderer never
-        // gets to say goodbye either.
+        // The pane window's 'beforeunload' listener is registered in _adopt(), NOT
+        // here: a listener added now would attach to the window's throwaway
+        // about:blank document and be discarded when /pane replaces it.
     }
 
     function unplace(id, el) {

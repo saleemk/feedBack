@@ -31,14 +31,18 @@ simply do not have.
 Two lines.
 
 ```js
-feedBack.panes.register({
-    id: 'camera_director',
-    title: 'Camera Director',
-    icon: '🎥',
-    element: () => panelEl,          // your existing panel, as it is
-});
-
-feedBack.panes.attachChip(panelEl, 'camera_director');
+// Guard: the panes API is optional. On a host without it, skip both calls and
+// your panel behaves exactly as it does today.
+const panes = window.feedBack && window.feedBack.panes;
+if (panes && typeof panes.register === 'function') {
+    panes.register({
+        id: 'camera_director',
+        title: 'Camera Director',
+        icon: '🎥',
+        element: () => panelEl,      // your existing panel, as it is
+    });
+    panes.attachChip(panelEl, 'camera_director');
+}
 ```
 
 `attachChip()` injects **the** standard pop-out chip (`⇱`) — same glyph, same

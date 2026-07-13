@@ -20,12 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (3) **reverse** — every pack committed here passes the spec's own `tools/validate.py` (7/7 pass today).
   The spec is pinned by SHA in `.feedpak-spec-ref` so a change over there can't redden an unrelated PR
   here; bump it in its own PR, and a red result is the signal that core doesn't satisfy the new spec.
-  A key that must ship ahead of the spec uses the reserved `x-` prefix (always allowed) or is recorded in
-  `feedpak-spec-exceptions.yml` with a tracking issue — and the gate fails if such an exception goes stale,
-  so the allowlist can't become somewhere drift hides. `original_audio` is seeded there against #933 so the
-  gate lands green and starts blocking the *next* instance immediately; the gate takes no position on how
-  #933 resolves (the expected outcome is removing the key, since the spec already carries the mixdown as a
-  stem — not adopting it). Docs: [docs/feedpak-spec-gate.md](docs/feedpak-spec-gate.md).
+  **There is no in-repo escape hatch, by design.** A blocked PR has exactly one route: land the key in the
+  spec via the [FEP process](https://github.com/got-feedback/feedpak-spec/blob/main/CONTRIBUTING.md), then
+  bump `.feedpak-spec-ref` to the merged SHA in the same PR. `feedpak-spec-exceptions.yml` is a **closed
+  grandfather list** for keys that predate the gate, not a bypass: a fourth check (**allowlist-closed**)
+  diffs it against the base branch and fails any PR that *adds* an entry, so it may only shrink.
+  `original_audio` is grandfathered there against #933 so the gate lands green and starts blocking the
+  *next* instance immediately; the gate takes no position on how #933 resolves (the expected outcome is
+  removing the key, since the spec already carries the mixdown as a stem — not adopting it). Docs:
+  [docs/feedpak-spec-gate.md](docs/feedpak-spec-gate.md).
 
 ### Removed
 - **The classic v2 UI shell is gone — v3 is the only UI (R3a).** `static/index.html`, the

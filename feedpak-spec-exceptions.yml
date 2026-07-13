@@ -1,29 +1,36 @@
-# Manifest keys core reads OR WRITES that the feedpak spec does not (yet) define.
+# CLOSED grandfather list — manifest keys core reads or writes that predate the
+# spec-conformance gate and that the feedpak spec does not define.
 #
-# Both directions are gated, and both are allowlisted here. A key core *writes*
-# (`manifest["k"] = v`) is spec surface pointed outward — it lands in every pack
-# we emit — so an undeclared one needs an entry here just as much as one core
-# reads.
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │  THIS IS NOT AN ESCAPE HATCH. You cannot add to it.                      │
+# │  CI fails any PR that adds an entry here. The list may only SHRINK.      │
+# └─────────────────────────────────────────────────────────────────────────┘
 #
-# This file exists so the spec-conformance gate (tools/check_spec_conformance.py)
-# can be honest instead of being switched off. A gate with no legitimate way to
-# say "yes, deliberately, not yet" gets commented out the first time it blocks a
-# release — so drift that is *known and tracked* is allowed to sit here, and
-# only drift that is unknown and untracked fails the build.
+# There is deliberately no in-repo way to merge a manifest key the spec doesn't
+# define. The feedpak spec's own governance is explicit:
 #
-# Rules:
-#   - Every entry needs a tracking issue. No issue, no exception.
-#   - Entries are debt, not policy. The fix is to land the key in the spec
-#     (github.com/got-feedback/feedpak-spec) and delete the entry.
-#   - One entry per key. A duplicate is an error, not a last-one-wins.
-#   - The gate fails if an entry goes stale — i.e. the spec caught up, or core
-#     no longer reads or writes the key. The allowlist must never become a
-#     hiding place.
+#   "This repository defines the format only. Applications that read or write
+#    feedpak ... track this spec as a dependency; they do not drive it.
+#    A change is not part of the format until it lands here."
+#     — got-feedback/feedpak-spec, GOVERNANCE.md
 #
-# For a key that is genuinely experimental and not yet ready for the spec,
-# prefer the reserved `x-` prefix (e.g. `x-my_new_key`) over an exception: the
-# gate permits `x-`-prefixed keys unconditionally, and the prefix tells every
-# third-party packer that the key is not stable surface.
+# So a new manifest key goes through the feedpak Enhancement Proposal (FEP)
+# process — see feedpak-spec/CONTRIBUTING.md:
+#
+#   1. Open a FEP issue on got-feedback/feedpak-spec describing the problem, the
+#      on-disk shape, backward compatibility, and the version bump implied.
+#   2. Land one PR there updating the normative spec, the JSON Schemas, an
+#      example that exercises it, and the changelog — together.
+#   3. Back here, bump `.feedpak-spec-ref` to that merged SHA in the same PR that
+#      adds your code. The gate then goes green, because the key is now declared.
+#
+# That is the only route. If your PR is blocked by this gate, the answer is a
+# FEP, not an entry in this file.
+#
+# Entries below exist ONLY because they predate the gate. Each is debt with a
+# tracking issue, and each disappears when its issue is fixed. The gate also
+# fails if an entry goes stale — the spec caught up, or core no longer reads or
+# writes the key — so this file cannot quietly become a place drift hides.
 
 exceptions:
   - key: original_audio
@@ -31,14 +38,13 @@ exceptions:
     reason: >-
       Added by #583 (the full mix played while every stem fader sits at unity,
       since demucs recombination is lossy). Core, lib/enrichment.py, and the
-      stems plugin all depend on it, but it was never added to the spec — the
-      drift this gate exists to prevent.
+      stems plugin all depend on it, but it never went through a FEP and the
+      spec does not define it — the drift this gate exists to prevent.
 
-      The expected resolution is REMOVAL, not adoption: the spec already carries
-      the mixdown as a stem ({id: full, file: stems/full.ogg}), so this key added
-      a second, redundant location for audio to a format that already had one.
-      See #933.
+      The resolution is REMOVAL, not a FEP: the spec already carries the mixdown
+      as a stem ({id: full, file: stems/full.ogg}), so this key added a second,
+      redundant location for audio to a format that already had one. See #933.
 
-      Seeded here so the gate lands green and starts blocking the *next* instance
-      immediately, rather than blocking on #933. The entry goes away when core
-      stops reading the key.
+      Grandfathered so the gate can land green and start blocking the *next*
+      instance immediately, rather than blocking on #933. This entry goes away
+      when core stops reading the key.

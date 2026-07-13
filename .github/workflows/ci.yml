@@ -139,8 +139,11 @@ jobs:
       - uses: actions/checkout@v4
         # This job runs repository code (tools/check_spec_conformance.py) and
         # never pushes; don't leave the token in git config for it.
+        # fetch-depth: 0 so the base branch is available — the gate must prove
+        # the exception allowlist didn't grow in this PR.
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -183,8 +186,24 @@ jobs:
           # changed neither this repo nor the spec.
           pip install 'jsonschema==4.26.0'
 
+      - name: Fetch the base branch's exception allowlist
+        id: baseline
+        run: |
+          # The allowlist is closed: it grandfathers keys that predate this gate
+          # and may only shrink. Prove that by diffing against the base branch —
+          # without this, anyone could append an entry and route around the FEP
+          # process from inside this repo.
+          git fetch --no-tags --depth=1 origin main
+          if git cat-file -e FETCH_HEAD:feedpak-spec-exceptions.yml 2>/dev/null; then
+            git show FETCH_HEAD:feedpak-spec-exceptions.yml > "$RUNNER_TEMP/baseline-exceptions.yml"
+            echo "args=--baseline-exceptions $RUNNER_TEMP/baseline-exceptions.yml" >> "$GITHUB_OUTPUT"
+          else
+            # Only true until the PR that introduces this gate lands.
+            echo "args=--bootstrap-allowlist" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check feedpak spec conformance
-        run: python tools/check_spec_conformance.py --spec .feedpak-spec
+        run: python tools/check_spec_conformance.py --spec .feedpak-spec ${{ steps.baseline.outputs.args }}
 
   lint:
     # Maintainer/CI-only size + module-hygiene gate (constitution Principle I:

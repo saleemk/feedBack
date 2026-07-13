@@ -38,8 +38,9 @@ properties, and they cover the drift that actually occurs.
 | Layer | Check | Catches |
 |---|---|---|
 | 1. key-coverage | Every manifest key core reads **or writes** is declared in the spec's `manifest.schema.json`. | Core growing a key the spec never defined — the #933 class. |
-| 2. forward | Core's `load_song()` ingests every example pack the spec ships. | The spec adding or tightening something core ignores or breaks on. |
-| 3. reverse | Every pack committed to this repo passes the spec's `tools/validate.py`. | Core (or a contributor) committing a pack the spec would reject. |
+| 2. allowlist-closed | `feedpak-spec-exceptions.yml` has not **grown** relative to the base branch. | Someone routing around the FEP process by allowlisting their own new key. |
+| 3. forward | Core's `load_song()` ingests every example pack the spec ships. | The spec adding or tightening something core ignores or breaks on. |
+| 4. reverse | Every pack committed to this repo passes the spec's `tools/validate.py`. | Core (or a contributor) committing a pack the spec would reject. |
 
 Layer 1 works by walking the AST of the modules listed in `READERS` and collecting every literal key touched
 on a manifest dict (`manifest.get("x")`, `manifest["x"]`, and the wrapped
@@ -52,16 +53,41 @@ context — `Store` is a write, `Load` is a read — so `manifest["year"] = ...`
 
 ## When it fails
 
-You added a manifest key. Three ways forward, in order of preference:
+You added a manifest key the spec doesn't define. **There is exactly one way forward, and it is not in this
+repo.**
 
-1. **Land it in the spec first.** Open a PR against `feedpak-spec` adding the key to
-   `schemas/manifest.schema.json` and `spec/feedpak-v1.md`, bump `.feedpak-spec-ref` here to the merged
-   SHA, and your key passes. This is the intended path.
-2. **Mark it experimental.** Prefix the key `x-` (e.g. `x-my_new_key`). The gate permits `x-`-prefixed keys
-   unconditionally, and the prefix signals to every third-party packer that the key is not stable surface.
-3. **Record an exception.** Add it to `feedpak-spec-exceptions.yml` with a tracking issue. This is debt, and
-   the gate treats it as such: an exception goes stale (and fails the build) the moment the spec catches up
-   or core stops reading the key, so the allowlist can't become somewhere drift quietly accumulates.
+Land the key in the spec through the **feedpak Enhancement Proposal (FEP)** process
+([feedpak-spec/CONTRIBUTING.md](https://github.com/got-feedback/feedpak-spec/blob/main/CONTRIBUTING.md)):
+
+1. **Open a FEP issue** on `got-feedback/feedpak-spec` — the problem, the proposed on-disk shape (manifest
+   key and/or side-file), backward compatibility, and the version bump it implies.
+2. **Discuss**, until it has a clear shape and rough consensus.
+3. **Land one PR there** that updates the normative spec (`spec/feedpak-v1.md`), the relevant JSON
+   Schema(s), an example in `examples/` that exercises it, and the changelog — *together*. A PR touching
+   only one of those is incomplete.
+4. **Back here**, bump `.feedpak-spec-ref` to that merged SHA, in the same PR as your code. The gate goes
+   green, because the key is now genuinely part of the format.
+
+That is deliberately the only route. There is **no in-repo escape hatch** — no experimental prefix, no
+self-serve allowlist. If your PR is blocked, the answer is a FEP, not a workaround. The person merging has
+to stop and decide whether the change is worth taking through the format process, which is the whole point.
+
+The spec's own governance says the same thing:
+
+> This repository defines the format only. Applications that read or write feedpak ... track this spec as a
+> dependency; they do not drive it. **A change is not part of the format until it lands here.**
+> — [feedpak-spec/GOVERNANCE.md](https://github.com/got-feedback/feedpak-spec/blob/main/GOVERNANCE.md)
+
+### `feedpak-spec-exceptions.yml` is a closed grandfather list, not a hatch
+
+It exists solely because `original_audio` predates the gate. **CI fails any PR that adds an entry** (layer 2
+diffs it against the base branch), so the list can only ever shrink. Entries are debt, each carries a
+tracking issue, and each disappears when the underlying key is removed from core. The gate also fails on a
+*stale* entry — the spec caught up, or core stopped touching the key — so the file cannot quietly become
+somewhere drift accumulates.
+
+Deleting an entry does not, by itself, get you past the gate: layer 1 still fails while core reads the key.
+The entry goes when the **code** goes.
 
 ## Pinning
 

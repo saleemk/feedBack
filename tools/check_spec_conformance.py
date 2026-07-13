@@ -58,10 +58,15 @@ PACK_GLOBS = ["content/starter/*.feedpak", "docs/**/*.sloppak", "docs/**/*.feedp
 
 EXCEPTIONS_FILE = REPO / "feedpak-spec-exceptions.yml"
 
-# Keys under this prefix are reserved for pre-spec experimentation and are
-# always permitted. Anything else undeclared must be listed in the exceptions
-# file with a tracking issue, or the build fails.
-EXPERIMENTAL_PREFIX = "x-"
+# How a new manifest key gets into core. There is no in-repo shortcut, by design:
+# the spec's own governance says "a change is not part of the format until it
+# lands here", and the FEP process is how it lands.
+FEP = (
+    "A new manifest key must go through the feedpak Enhancement Proposal process "
+    "(https://github.com/got-feedback/feedpak-spec/blob/main/CONTRIBUTING.md): land a PR on "
+    "feedpak-spec that updates the normative spec, the JSON Schemas, an example, and the "
+    "changelog together — then bump .feedpak-spec-ref to the merged SHA in this PR."
+)
 
 
 def _fail(msg: str) -> None:
@@ -117,29 +122,73 @@ def keys_touched(path: Path) -> tuple[set[str], set[str]]:
     return reads, writes
 
 
-def load_exceptions() -> dict[str, str]:
-    """Map of allowlisted key -> tracking issue URL."""
-    if not EXCEPTIONS_FILE.exists():
-        return {}
+def _parse_exceptions(text: str, origin: str) -> dict[str, str]:
+    """Parse an exceptions document into {key: tracking issue}."""
     import yaml  # runtime dep (PyYAML is already in requirements.txt)
 
-    data = yaml.safe_load(EXCEPTIONS_FILE.read_text(encoding="utf-8")) or {}
+    data = yaml.safe_load(text) or {}
     out: dict[str, str] = {}
     for entry in data.get("exceptions") or []:
         key, issue = entry.get("key"), entry.get("issue")
         if not key or not issue:
-            _fail(f"{EXCEPTIONS_FILE.name}: every exception needs both 'key' and 'issue'")
+            _fail(f"{origin}: every exception needs both 'key' and 'issue'")
             sys.exit(1)
         # A duplicate would silently take the last issue link, quietly retargeting
         # the debt this file exists to track. Fail instead.
         if key in out:
             _fail(
-                f"{EXCEPTIONS_FILE.name}: '{key}' is listed more than once. "
+                f"{origin}: '{key}' is listed more than once. "
                 f"Keep one entry per key so the tracking issue is unambiguous."
             )
             sys.exit(1)
         out[key] = issue
     return out
+
+
+def load_exceptions() -> dict[str, str]:
+    """Map of grandfathered key -> tracking issue URL, as of this working tree."""
+    if not EXCEPTIONS_FILE.exists():
+        return {}
+    return _parse_exceptions(
+        EXCEPTIONS_FILE.read_text(encoding="utf-8"), EXCEPTIONS_FILE.name
+    )
+
+
+def check_allowlist_closed(baseline: Path | None, bootstrap: bool) -> bool:
+    """The allowlist is CLOSED: it may shrink, never grow.
+
+    `feedpak-spec-exceptions.yml` grandfathers keys that predate this gate. It is
+    not a way to merge a new one. Without this check the gate would be a speed
+    bump with a signed excuse note — anyone could append an entry and route
+    around the FEP process from inside this repo, which is exactly the drift that
+    produced #933.
+
+    So: removing an entry is fine (that's the debt being paid down); adding one
+    fails the build, and the error points at the FEP process instead.
+    """
+    if bootstrap:
+        print("  allowlist-closed: bootstrapping (no baseline on the base branch) — skipped")
+        return True
+    if baseline is None:
+        print("  allowlist-closed: no baseline supplied (local run) — skipped")
+        return True
+
+    base_keys = set(
+        _parse_exceptions(baseline.read_text(encoding="utf-8"), f"{EXCEPTIONS_FILE.name} (base)")
+    )
+    now_keys = set(load_exceptions())
+    added = sorted(now_keys - base_keys)
+    removed = sorted(base_keys - now_keys)
+
+    for key in added:
+        _fail(
+            f"{EXCEPTIONS_FILE.name}: this PR ADDS an exception for '{key}'. The allowlist is "
+            f"closed — it grandfathers keys that predate this gate and may only shrink. {FEP}"
+        )
+    if removed:
+        print(f"  allowlist shrank (debt paid down): {', '.join(removed)}")
+    print(f"  allowlist-closed: {'FAILED' if added else 'OK'}")
+    return not added
 
 
 def check_key_coverage(spec: Path) -> bool:
@@ -165,25 +214,16 @@ def check_key_coverage(spec: Path) -> bool:
     ok = True
 
     def _undeclared(keys: set[str]) -> list[str]:
-        flagged = {k for k in (keys - declared) if not k.startswith(EXPERIMENTAL_PREFIX)}
-        return sorted(flagged - set(exceptions))
+        return sorted((keys - declared) - set(exceptions))
 
     for key in _undeclared(reads):
-        _fail(
-            f"core reads manifest key '{key}', which the feedpak spec does not define. "
-            f"Add it to the spec (github.com/got-feedback/feedpak-spec) before merging, "
-            f"rename it to '{EXPERIMENTAL_PREFIX}{key}' if it is deliberately pre-spec, or "
-            f"record it in {EXCEPTIONS_FILE.name} with a tracking issue."
-        )
+        _fail(f"core reads manifest key '{key}', which the feedpak spec does not define. {FEP}")
         ok = False
 
     for key in _undeclared(writes):
         _fail(
-            f"core writes manifest key '{key}', which the feedpak spec does not define — "
-            f"that puts non-spec surface into every pack we emit. Add it to the spec "
-            f"(github.com/got-feedback/feedpak-spec) before merging, rename it to "
-            f"'{EXPERIMENTAL_PREFIX}{key}' if it is deliberately pre-spec, or record it in "
-            f"{EXCEPTIONS_FILE.name} with a tracking issue."
+            f"core writes manifest key '{key}', which the feedpak spec does not define — that "
+            f"puts non-spec surface into every pack we emit. {FEP}"
         )
         ok = False
 
@@ -298,6 +338,18 @@ def main() -> int:
         type=Path,
         help="path to a feedpak-spec checkout (CI pins the SHA in .feedpak-spec-ref)",
     )
+    ap.add_argument(
+        "--baseline-exceptions",
+        type=Path,
+        help="the exceptions file as it exists on the base branch. Supplied by CI so the "
+             "allowlist can be proven to have not grown. Omit for a local run.",
+    )
+    ap.add_argument(
+        "--bootstrap-allowlist",
+        action="store_true",
+        help="the base branch has no exceptions file yet (this PR introduces the gate), so "
+             "there is nothing to diff against. CI passes this only in that case.",
+    )
     args = ap.parse_args()
 
     spec = args.spec.resolve()
@@ -305,14 +357,16 @@ def main() -> int:
         _fail(f"{spec} does not look like a feedpak-spec checkout")
         return 1
 
-    print("[1/3] key-coverage — core reads only keys the spec declares")
+    print("[1/4] key-coverage — core reads/writes only keys the spec declares")
     ok1 = check_key_coverage(spec)
-    print("[2/3] forward — core ingests the spec's example packs")
-    ok2 = check_forward(spec)
-    print("[3/3] reverse — committed packs satisfy the reference validator")
-    ok3 = check_reverse(spec)
+    print("[2/4] allowlist-closed — the grandfather list may shrink, never grow")
+    ok2 = check_allowlist_closed(args.baseline_exceptions, args.bootstrap_allowlist)
+    print("[3/4] forward — core ingests the spec's example packs")
+    ok3 = check_forward(spec)
+    print("[4/4] reverse — committed packs satisfy the reference validator")
+    ok4 = check_reverse(spec)
 
-    if ok1 and ok2 and ok3:
+    if ok1 and ok2 and ok3 and ok4:
         print("\nfeedpak spec conformance: OK")
         return 0
     print("\nfeedpak spec conformance: FAILED")

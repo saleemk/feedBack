@@ -33,7 +33,11 @@
         if (!dockEl) {
             dockEl = document.createElement('div');
             dockEl.id = 'fb-pane-dock';
-            dockEl.className = 'fb-pane-dock';
+            // `is-empty` from the start: panes.css hides an empty dock, and a dock
+            // born without the class is a visible-to-CSS, announced-to-screen-readers
+            // `role="region"` landmark with nothing in it until the first card
+            // arrives. Born empty, because it is.
+            dockEl.className = 'fb-pane-dock is-empty';
             dockEl.setAttribute('role', 'region');
             dockEl.setAttribute('aria-label', 'Panes');
             document.body.appendChild(dockEl);

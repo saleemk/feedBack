@@ -13,11 +13,16 @@
  *
  * That is why this file must use `window.open()` and not ask the desktop's main
  * process to make a BrowserWindow: a window we didn't open gives us no handle to
- * its document, and without the handle there is nothing to adopt into. Electron
- * turns this same-origin `window.open()` into a real BrowserWindow anyway (see
- * main.ts's setWindowOpenHandler → `action: 'allow'`), and the main process
- * recognises it by its frame name and gives it remembered bounds, always-on-top
- * and the system tray. We get the OS window AND the DOM link.
+ * its document, and without the handle there is nothing to adopt into.
+ *
+ * Electron turns this same-origin `window.open()` into a real BrowserWindow anyway
+ * — its setWindowOpenHandler answers same-origin URLs with `action: 'allow'` — and
+ * the main process then recognises the window by its frame name and gives it
+ * remembered bounds, skip-taskbar and a system-tray entry. So we get the OS window
+ * AND the DOM link. (That code lives in the separate desktop repo,
+ * got-feedback/feedBack-desktop: src/main/main.ts and src/main/pane-hosts.ts. It is
+ * not in this repo, and nothing here depends on it — in a plain browser this is
+ * simply a pop-up.)
  *
  * Styles come across too — the pane document starts empty, so we copy the app's
  * stylesheets into it. Without that the panel would land unstyled, which is the
@@ -32,8 +37,14 @@
         return;
     }
 
-    // The desktop's main process finds a pane window by this name and attaches
-    // bounds, tray and always-on-top to it. Keep it in sync with pane-hosts.ts.
+    // The frame name every pane window is opened with. In the desktop app the main
+    // process matches on this prefix to recognise a pane window and give it its
+    // remembered bounds, skip-taskbar and tray entry — so changing it here without
+    // changing it there silently downgrades every pane to a plain pop-up.
+    //
+    // The other half lives in a DIFFERENT REPO (got-feedback/feedBack-desktop,
+    // src/main/pane-hosts.ts). There is no build-time link between them; this comment
+    // is the link.
     const FRAME_PREFIX = 'fbpane-';
 
     const wins = new Map();   // paneId -> Window

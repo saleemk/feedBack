@@ -99,6 +99,10 @@
     <link rel="stylesheet" href="/static/tour-engine.css">
     <!-- v0.3.0 shell styles (radial-gradient bg, custom scrollbars). -->
     <link rel="stylesheet" href="/static/v3/v3.css">
+    <!-- Detachable panes: the pop-out chip, the dock, and the widgets built-in
+         panes render with. Hand-authored (not Tailwind-scanned) so a
+         runtime-installed plugin can use the chip without shipping its own CSS. -->
+    <link rel="stylesheet" href="/static/panes/panes.css">
     <!-- EVERY external script below is `defer`. Do not add a plain one.
          `defer` and `type="module"` scripts share a single "execute after
          parsing" list and run in DOCUMENT ORDER; a plain classic script runs
@@ -1048,6 +1052,10 @@
                     <span class="v3-rail-border"></span>
                     <svg class="v3-rail-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M12,2A3,3 0 0,1 15,5V11A3,3 0 0,1 12,14A3,3 0 0,1 9,11V5A3,3 0 0,1 12,2M19,11C19,14.53 16.39,17.44 13,17.93V21H11V17.93C7.61,17.44 5,14.53 5,11H7A5,5 0 0,0 12,16A5,5 0 0,0 17,11H19Z"/></svg>
                 </button>
+                <button class="v3-rail-icon" type="button" data-rail="panes" aria-haspopup="true" aria-expanded="false" aria-controls="v3-rail-pop-panes" title="Panes" aria-label="Panes">
+                    <span class="v3-rail-border"></span>
+                    <svg class="v3-rail-svg" viewBox="0 0 24 24" aria-hidden="true"><path d="M19,4H5A2,2 0 0,0 3,6V18A2,2 0 0,0 5,20H19A2,2 0 0,0 21,18V6A2,2 0 0,0 19,4M13,18H5V6H13V18M19,18H15V6H19V18Z"/></svg>
+                </button>
                 <button class="v3-rail-icon" type="button" data-rail="plugins" aria-haspopup="true" aria-expanded="false" aria-controls="v3-rail-pop-plugins" title="Plugin controls" aria-label="Plugin controls">
                     <span class="v3-rail-border"></span>
                     <span class="v3-rail-badge" id="v3-plugin-count" hidden></span>
@@ -1064,6 +1072,15 @@
                  injects into #player-controls (the auto-hiding transport) into
                  this stable, always-reachable popover. See player-chrome.js
                  (rehoming MutationObserver). -->
+            <!-- Panes: open/close any registered detachable pane. Populated from
+                 the pane registry by static/panes/pane-launcher.js — a plugin
+                 that calls feedBack.panes.register() shows up here for free. -->
+            <div id="v3-rail-pop-panes" class="v3-rail-pop hidden" role="group" aria-label="Panes">
+                <div class="v3-pop-label">Panes</div>
+                <div id="v3-rail-panes-list" class="flex flex-col gap-1"></div>
+                <p class="text-xs text-gray-500 px-1 pb-1 leading-snug">Panes stay open while you play, and across song switches.</p>
+            </div>
+
             <div id="v3-rail-pop-plugins" class="v3-rail-pop hidden" role="group" aria-label="Plugin controls">
                 <div class="v3-pop-label">Plugin controls</div>
                 <div id="v3-plugin-controls-slot" class="v3-plugin-slot"></div>
@@ -1300,6 +1317,15 @@
     <script defer src="/static/v3/interface-size-nudge.js"></script>
     <script defer src="/static/v3/feedbarcade.js"></script>
     <script defer src="/static/v3/player-chrome.js"></script>
+    <!-- Detachable panes. The manager first; then the hosts, which register
+         themselves with it; then the chip and the launcher, which drive it.
+         pane-desktop only does anything inside the desktop app. -->
+    <script defer src="/static/panes/pane-manager.js"></script>
+    <script defer src="/static/panes/pane-dock.js"></script>
+    <script defer src="/static/panes/pane-window-host.js"></script>
+    <script defer src="/static/panes/pane-desktop.js"></script>
+    <script defer src="/static/panes/pane-chip.js"></script>
+    <script defer src="/static/panes/pane-launcher.js"></script>
     <script>
         // Navbar scroll effect
         window.addEventListener('scroll', () => {

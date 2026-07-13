@@ -1715,3 +1715,19 @@ def index():
 def index_v3():
     # Retained as a back-compat alias for links minted while v3 was opt-in.
     return FileResponse(str(STATIC_DIR / "v3" / "index.html"))
+
+
+@app.get("/pane")
+def pane_host():
+    # The document a popped-out pane is displayed in. It builds nothing: the opener
+    # MOVES the real panel element into it (document.adoptNode) and copies the app's
+    # stylesheets across. See docs/plugin-panes.md.
+    #
+    # no-cache, matching the /static mount's contract (_RevalidatedStaticFiles).
+    # The opener adopts the panel into this page's #fb-pane-root, so a stale copy
+    # served from cache is a real hazard — it falls back to <body>, which works but
+    # loses the pane window's own layout, and a future change to the page would be
+    # invisible until the cache expired.
+    resp = FileResponse(str(STATIC_DIR / "panes" / "pane.html"))
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp

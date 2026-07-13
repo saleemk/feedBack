@@ -103,9 +103,19 @@
     // So we do not trust readyState, and we do not trust 'load' (which may have
     // fired for about:blank before we could listen). We wait for the one thing that
     // only exists in the document we actually want: pane.html's #fb-pane-root.
+    // How long a "we cannot even see the pop-out's document" condition has to persist
+    // before we call it fatal. A SecurityError means the window is not reachable from
+    // this realm at all, and waiting cannot fix that — but we give it a moment anyway
+    // rather than bailing on the first tick, because a throw *during* the navigation
+    // from about:blank to /pane would otherwise take down a pop-out that was about to
+    // work perfectly. A second is far more than that transition needs, and far less
+    // than the 10s a user would otherwise stare at a detached panel for.
+    const UNREACHABLE_GRACE_MS = 1000;
+
     function _whenReady(w, onReady, onFail) {
         const deadline = performance.now() + 10000;
-        let reachFailure = null;   // why we could never see the pop-out's document
+        let reachFailure = null;      // why we could never see the pop-out's document
+        let reachFailureAt = 0;       // when we first couldn't
         const tick = () => {
             if (w.closed) return;
 
@@ -117,7 +127,18 @@
                 // browsing-context group), and no amount of waiting will fix it —
                 // adoptNode can never work.
                 doc = null;
+                if (!reachFailure) reachFailureAt = performance.now();
                 reachFailure = e;
+            }
+
+            // Unreachable, and it has stayed that way. Fail now rather than leaving
+            // the panel detached and the UI mid-pop-out for the full 10s deadline,
+            // when we already know this can never succeed.
+            if (reachFailure && !doc && performance.now() - reachFailureAt > UNREACHABLE_GRACE_MS) {
+                onFail(new Error('the pane window\'s document is NOT reachable from this window ('
+                    + reachFailure.name + ': ' + reachFailure.message
+                    + ') — it is in a separate process, so the element cannot be moved into it'));
+                return;
             }
 
             if (doc && doc.readyState !== 'loading') {

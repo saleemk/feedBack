@@ -141,6 +141,13 @@
     function attachChip(el, paneId, opts) {
         opts = opts || {};
         if (!(el instanceof Element)) throw new TypeError('panes.attachChip: el must be an Element');
+        // Validate here, not at the insertBefore below. This is a public plugin API,
+        // and a truthy non-Element `header` (a selector string, a jQuery-ish wrapper,
+        // a ref object) is an easy mistake to make — one that would otherwise surface
+        // as a confusing DOM exception from deep inside core.
+        if (opts.header != null && !(opts.header instanceof Element)) {
+            throw new TypeError('panes.attachChip(' + paneId + '): opts.header must be an Element');
+        }
         const spec = panes.get(paneId);
         if (!spec) { console.warn('[panes] attachChip: register the pane first:', paneId); return () => {}; }
         if (attached.has(paneId)) { console.warn('[panes] attachChip: already attached:', paneId); return () => {}; }

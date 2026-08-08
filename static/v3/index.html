@@ -123,6 +123,7 @@
          script logs anything; load it as early as possible. See
          docs/diagnostics-bundle-spec.md (feedBack#166). -->
     <script defer src="/static/diagnostics.js"></script>
+    <script defer src="/static/v3/pwa-install.js"></script>
     <script type="module" src="/static/capabilities.js"></script>
     <script type="module" src="/static/capabilities/library.js"></script>
     <script type="module" src="/static/capabilities/tuning.js"></script>
@@ -729,6 +730,19 @@
             <div class="fb-tabpanel" data-tab="system">
                 <div class="fb-tabpanel-head"><h3>System</h3></div>
                 <div class="fb-srows">
+                    <div id="pwa-install-row" class="hidden fb-srow">
+                        <div class="fb-srow-main">
+                            <div class="fb-srow-title">App installation</div>
+                            <div id="pwa-install-desc" class="fb-srow-desc"></div>
+                        </div>
+                        <div class="fb-srow-control">
+                            <span id="pwa-install-status" class="hidden text-xs text-gray-400" role="status"></span>
+                            <button type="button" id="pwa-install-action"
+                                class="hidden bg-accent hover:bg-accent-light px-4 py-2.5 rounded-xl text-sm font-medium text-white transition">
+                                Install app
+                            </button>
+                        </div>
+                    </div>
                     <!-- App Updates — desktop-only; setupAppUpdates() unhides. -->
                     <div id="app-updates-block" class="hidden fb-srow fb-srow-stack">
                         <div class="fb-srow-main">
@@ -913,6 +927,26 @@
                     </div>
                     <div id="settings-status" class="text-sm text-gray-500"></div>
                 </div>
+                <dialog id="pwa-install-ios-dialog" class="fb-pwa-install-dialog" aria-labelledby="pwa-install-ios-title">
+                    <div class="fb-pwa-install-sheet">
+                        <div class="fb-pwa-install-sheet-head">
+                            <h3 id="pwa-install-ios-title">Install fee[dB]ack</h3>
+                            <button type="button" id="pwa-install-ios-close" class="fb-pwa-install-close"
+                                aria-label="Close installation steps" title="Close">&times;</button>
+                        </div>
+                        <ol>
+                            <li>Tap Share in Safari.</li>
+                            <li>Choose Add to Home Screen.</li>
+                            <li>Turn on Open as Web App, then tap Add.</li>
+                        </ol>
+                        <div class="fb-pwa-install-sheet-actions">
+                            <button type="button" id="pwa-install-ios-done"
+                                class="bg-accent hover:bg-accent-light px-4 py-2.5 rounded-xl text-sm font-medium text-white transition">
+                                Done
+                            </button>
+                        </div>
+                    </div>
+                </dialog>
             </div>
         </div>
     </div>

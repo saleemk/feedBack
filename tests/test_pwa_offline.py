@@ -29,6 +29,14 @@ def test_manifest_has_stable_identity_scope_and_start_url():
     assert manifest["scope"] == "/"
 
 
+def test_manifest_does_not_claim_unverified_maskable_icons():
+    manifest = json.loads((V3_DIR / "manifest.json").read_text(encoding="utf-8"))
+    png_icons = [icon for icon in manifest["icons"] if icon["type"] == "image/png"]
+
+    assert {icon["sizes"] for icon in png_icons} == {"192x192", "512x512"}
+    assert {icon["purpose"] for icon in png_icons} == {"any"}
+
+
 def test_v3_document_registers_root_scoped_worker_safely():
     source = (V3_DIR / "index.html").read_text(encoding="utf-8")
 
@@ -37,6 +45,15 @@ def test_v3_document_registers_root_scoped_worker_safely():
     assert "scope: '/'" in source
     assert "updateViaCache: 'none'" in source
     assert ".catch(function ()" in source
+
+
+def test_v3_document_loads_one_deferred_install_controller_and_system_row():
+    source = (V3_DIR / "index.html").read_text(encoding="utf-8")
+
+    assert source.count('src="/static/v3/pwa-install.js"') == 1
+    assert '<script defer src="/static/v3/pwa-install.js"></script>' in source
+    assert source.count('id="pwa-install-row"') == 1
+    assert 'id="pwa-install-ios-dialog"' in source
 
 
 @pytest.mark.parametrize("path", ["/", "/v3"])

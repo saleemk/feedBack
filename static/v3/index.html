@@ -1350,6 +1350,21 @@
     <script defer src="/static/panes/pane-chip.js"></script>
     <script defer src="/static/panes/pane-launcher.js"></script>
     <script>
+        (function () {
+            try {
+                if (!('serviceWorker' in navigator)) return;
+                window.addEventListener('load', function () {
+                    try {
+                        navigator.serviceWorker.register('/service-worker.js', {
+                            scope: '/',
+                            updateViaCache: 'none'
+                        }).catch(function () { /* offline support is optional */ });
+                    } catch (_) { /* registration must not affect startup */ }
+                }, { once: true });
+            } catch (_) { /* unsupported or restricted browser */ }
+        })();
+    </script>
+    <script>
         // Navbar scroll effect
         window.addEventListener('scroll', () => {
             const nav = document.getElementById('navbar');

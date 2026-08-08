@@ -1712,6 +1712,17 @@ def tailwind_css(request: Request):
     return resp
 
 
+@app.get("/service-worker.js", include_in_schema=False)
+def service_worker():
+    resp = FileResponse(
+        str(STATIC_DIR / "v3" / "service-worker.js"),
+        media_type="application/javascript",
+    )
+    resp.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
 app.mount("/static", _RevalidatedStaticFiles(directory=str(STATIC_DIR)), name="static")
 
 

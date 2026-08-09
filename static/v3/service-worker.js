@@ -136,6 +136,47 @@ async function cleanupShellCaches() {
   );
 }
 
+async function resolveCompleteShellCache() {
+  const keys = await caches.keys();
+  const olderNames = keys
+    .filter((key) => key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE_NAME)
+    .reverse();
+  const candidateNames = keys.includes(SHELL_CACHE_NAME)
+    ? [SHELL_CACHE_NAME, ...olderNames]
+    : olderNames;
+
+  // CacheStorage keys are creation-ordered, so preserved candidates are checked newest first.
+  for (const name of candidateNames) {
+    const cache = await caches.open(name);
+    if (await cache.match(SHELL_COMPLETE_URL)) return cache;
+  }
+  return null;
+}
+
+function shellCacheKey(request) {
+  const url = new URL(request.url);
+  const pluginAsset = url.pathname.match(/^\/api\/plugins\/[^/]+\/(.+)$/);
+  const queryKeys = Array.from(url.searchParams.keys());
+  if (pluginAsset && !pluginAsset[1].startsWith('g/')
+      && queryKeys.length === 1 && queryKeys[0] === 'v') {
+    url.search = '';
+  }
+  return url.href;
+}
+
+async function shellResourceResponse(request) {
+  const cache = await resolveCompleteShellCache();
+  const cached = cache ? await cache.match(shellCacheKey(request)) : null;
+  if (!cached) return fetch(request);
+
+  try {
+    const response = await fetch(request);
+    return TRANSIENT_UNAVAILABLE_STATUSES.has(response.status) ? cached : response;
+  } catch (_) {
+    return cached;
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
@@ -161,10 +202,20 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET' || event.request.mode !== 'navigate') return;
+  if (event.request.method !== 'GET') return;
 
   const url = new URL(event.request.url);
-  if (url.origin !== self.location.origin || !APP_ENTRY_PATHS.has(url.pathname)) return;
+  if (url.origin !== self.location.origin) return;
+
+  if (event.request.mode !== 'navigate') {
+    const isShellResource = url.pathname.startsWith('/static/')
+      || url.pathname === PLUGINS_URL
+      || url.pathname.startsWith(`${PLUGINS_URL}/`);
+    if (isShellResource) event.respondWith(shellResourceResponse(event.request));
+    return;
+  }
+
+  if (!APP_ENTRY_PATHS.has(url.pathname)) return;
 
   const networkRequest = new Request(event.request, { cache: 'no-store' });
   event.respondWith(

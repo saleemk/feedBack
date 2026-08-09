@@ -315,6 +315,133 @@ test('activation removes older shell versions only when the current marker exist
     assert.equal(harness.claimCalls(), 1);
 });
 
+test('matching current shell resources stay network-first and mask only transient failures', async () => {
+    const network = [
+        new FakeResponse('online'),
+        new Error('network down'),
+        new FakeResponse('bad gateway', { status: 502 }),
+        new FakeResponse('unavailable', { status: 503 }),
+        new FakeResponse('timeout', { status: 504 }),
+        new FakeResponse('missing', { status: 404 }),
+        new FakeResponse('server error', { status: 500 }),
+    ];
+    const harness = createHarness({
+        seedCaches: {
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('cached app'),
+            },
+            'feedback-pwa-shell-v0': {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('older cached app'),
+            },
+        },
+        fetchHook: async () => {
+            const result = network.shift();
+            if (result instanceof Error) throw result;
+            return result;
+        },
+    });
+    const request = () => new FakeRequest('/static/app.js');
+
+    assert.equal(await (await harness.dispatchFetch(request())).text(), 'online');
+    for (let index = 0; index < 4; index += 1) {
+        assert.equal(await (await harness.dispatchFetch(request())).text(), 'cached app');
+    }
+    const missing = await harness.dispatchFetch(request());
+    const serverError = await harness.dispatchFetch(request());
+    assert.equal(missing.status, 404);
+    assert.equal(await missing.text(), 'missing');
+    assert.equal(serverError.status, 500);
+    assert.equal(await serverError.text(), 'server error');
+    assert.equal(harness.fetches.length, 7);
+});
+
+test('plugin discovery and versioned stable assets use their exact cached snapshots', async () => {
+    const harness = createHarness({
+        seedCaches: {
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                [PLUGINS_URL]: new FakeResponse('cached plugins'),
+                '/api/plugins/mobile%20ui/screen.js': new FakeResponse('cached plugin'),
+            },
+        },
+        fetchHook: async () => { throw new Error('network down'); },
+    });
+
+    assert.equal(
+        await (await harness.dispatchFetch(new FakeRequest(PLUGINS_URL))).text(),
+        'cached plugins',
+    );
+    assert.equal(
+        await (await harness.dispatchFetch(
+            new FakeRequest('/api/plugins/mobile%20ui/screen.js?v=0.4.0'),
+        )).text(),
+        'cached plugin',
+    );
+    await assert.rejects(
+        harness.dispatchFetch(new FakeRequest('/api/plugins/mobile%20ui/g/1/screen.js?v=0.4.0')),
+        /network down/,
+    );
+});
+
+test('incomplete current caches are skipped in favor of complete preserved caches', async () => {
+    const incompleteOnly = createHarness({
+        seedCaches: {
+            [SHELL_CACHE]: { '/static/app.js': new FakeResponse('incomplete') },
+        },
+        fetchHook: async () => { throw new Error('network down'); },
+    });
+    await assert.rejects(
+        incompleteOnly.dispatchFetch(new FakeRequest('/static/app.js')),
+        /network down/,
+    );
+
+    for (const currentEntries of [null, {
+        '/static/app.js': new FakeResponse('incomplete current'),
+    }]) {
+        const seedCaches = {
+            'feedback-pwa-shell-legacy': {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('older preserved app'),
+            },
+            'feedback-pwa-shell-v0': {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('preserved app'),
+            },
+        };
+        if (currentEntries) seedCaches[SHELL_CACHE] = currentEntries;
+        const harness = createHarness({
+            seedCaches,
+            fetchHook: async () => { throw new Error('network down'); },
+        });
+
+        assert.equal(
+            await (await harness.dispatchFetch(new FakeRequest('/static/app.js'))).text(),
+            'preserved app',
+        );
+    }
+});
+
+test('uncached resources and unrelated APIs keep ordinary network behavior', async () => {
+    const harness = createHarness({
+        seedCaches: {
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('cached app'),
+            },
+        },
+        fetchHook: async () => new FakeResponse('unavailable', { status: 503 }),
+    });
+
+    assert.equal(await harness.dispatchFetch(new FakeRequest('/api/profile')), undefined);
+    const uncached = await harness.dispatchFetch(new FakeRequest('/static/uncached.js'));
+    const queryMismatch = await harness.dispatchFetch(new FakeRequest('/static/app.js?v=1'));
+    assert.equal(uncached.status, 503);
+    assert.equal(queryMismatch.status, 503);
+    assert.equal(harness.fetches.length, 2);
+});
+
 test('navigation remains network-first with the independent recovery fallback', async () => {
     const network = [
         new FakeResponse('online'),
@@ -324,7 +451,11 @@ test('navigation remains network-first with the independent recovery fallback', 
     const harness = createHarness({
         seedCaches: {
             [RECOVERY_CACHE]: { '/static/v3/offline.html': new FakeResponse('recovery') },
-            [SHELL_CACHE]: { '/v3': new FakeResponse('must not be served') },
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/v3': new FakeResponse('must not be served'),
+                '/static/v3/index.html': new FakeResponse('cached shell'),
+            },
         },
         fetchHook: async () => {
             const result = network.shift();

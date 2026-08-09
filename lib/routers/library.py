@@ -9,7 +9,9 @@ owned by server.py; plugins register providers through plugin_context). The
 provider classes + shared query/collection helpers live in lib/library_registry.py.
 """
 
+import hashlib
 import inspect
+import json
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,38 @@ from reqfields import _clean_str
 import logging
 log = logging.getLogger("feedBack.server")
 router = APIRouter()
+
+DEVICE_CATALOG_SNAPSHOT_SCHEMA = "feedback.device-catalog.snapshot.v1"
+DEVICE_CATALOG_SNAPSHOT_SOURCE = "local"
+DEVICE_CATALOG_SNAPSHOT_MAX_RECORDS = 10_000
+DEVICE_CATALOG_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024
+DEVICE_CATALOG_SNAPSHOT_TITLE_MAX_CHARS = 512
+DEVICE_CATALOG_SNAPSHOT_ARTIST_MAX_CHARS = 512
+
+
+def _device_catalog_text(value: object, max_chars: int) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.strip()[:max_chars]
+
+
+def _compact_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
+def _device_catalog_song(row: tuple) -> dict[str, str]:
+    filename, title, artist = row
+    song_id = hashlib.sha256(filename.encode("utf-8")).hexdigest()
+    return {
+        "id": song_id,
+        "title": _device_catalog_text(title, DEVICE_CATALOG_SNAPSHOT_TITLE_MAX_CHARS),
+        "artist": _device_catalog_text(artist, DEVICE_CATALOG_SNAPSHOT_ARTIST_MAX_CHARS),
+    }
 
 
 
@@ -225,6 +259,36 @@ async def sync_library_provider_song(provider_id: str, song_id: str):
     if isinstance(result, dict):
         return result
     return {"ok": True, "result": result}
+
+
+@router.get("/api/library/device-catalog")
+def get_device_catalog_snapshot():
+    rows = appstate.meta_db.device_catalog_snapshot_rows(
+        DEVICE_CATALOG_SNAPSHOT_MAX_RECORDS + 1
+    )
+    if len(rows) > DEVICE_CATALOG_SNAPSHOT_MAX_RECORDS:
+        raise HTTPException(
+            status_code=413,
+            detail="Local library exceeds the device catalog snapshot record limit",
+        )
+
+    songs = sorted((_device_catalog_song(row) for row in rows), key=lambda song: song["id"])
+    revision = hashlib.sha256(_compact_json_bytes(songs)).hexdigest()
+    payload = {
+        "schema": DEVICE_CATALOG_SNAPSHOT_SCHEMA,
+        "source": DEVICE_CATALOG_SNAPSHOT_SOURCE,
+        "revision": revision,
+        "count": len(songs),
+        "total": len(songs),
+        "songs": songs,
+    }
+    body = _compact_json_bytes(payload)
+    if len(body) > DEVICE_CATALOG_SNAPSHOT_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="Local library exceeds the device catalog snapshot byte limit",
+        )
+    return Response(content=body, media_type="application/json")
 
 
 @router.get("/api/library")

@@ -4108,6 +4108,13 @@ class MetadataDB:
     # keyset-safe grouping filter (see query_page / query_stats).
     _GROUP_REP_PREDICATE = " AND filename IN (SELECT filename FROM work_display WHERE is_group_representative = 1)"
 
+    def device_catalog_snapshot_rows(self, limit: int) -> list[tuple]:
+        """Return the bounded local identity/title/artist source rows."""
+        return self.conn.execute(
+            "SELECT filename, title, artist FROM songs ORDER BY filename LIMIT ?",
+            (limit,),
+        ).fetchall()
+
     def query_page(self, q: str = "", page: int = 0, size: int = 24,
                    sort: str = "artist", direction: str = "asc",
                    favorites_only: bool = False,

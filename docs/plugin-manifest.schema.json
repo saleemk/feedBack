@@ -29,7 +29,19 @@
     "description": { "type": "string", "description": "Short one-sentence summary of the plugin, surfaced on the v3 Pedalboard Plugins page (clamped to ~2 lines). Optional and additive." },
     "category": { "type": "string", "description": "Which pedalboard the plugin sits on in the v3 Plugins page. Suggested values: 'audio', 'creation', 'practice', 'game', 'tools'. Free-form; unknown/absent values fall back to a curated default then 'other'. Optional and additive." },
     "icon": { "type": "string", "minLength": 1, "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$", "description": "Plugin-root-relative path under assets/ (e.g. 'assets/thumb.png') to a thumbnail (~square, ~256x256 PNG/SVG) shown as the pedal graphic on the v3 Plugins page. Same containment rule as `styles`. If omitted, the loader auto-detects assets/thumb.png; failing that the UI shows a default pedal graphic. Optional and additive." },
-    "styles": { "type": "string", "minLength": 1, "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$", "description": "Plugin-root-relative path under assets/ (e.g. 'assets/plugin.css') to a compiled, preflight-off Tailwind stylesheet the frontend injects as a <link>. Must stay under assets/ with no '..', backslash, or query/fragment. See docs/plugin-styles.md." }
+    "styles": { "type": "string", "minLength": 1, "pattern": "^assets/(?!.*\\.\\.)[^\\\\?#]+$", "description": "Plugin-root-relative path under assets/ (e.g. 'assets/plugin.css') to a compiled, preflight-off Tailwind stylesheet the frontend injects as a <link>. Must stay under assets/ with no '..', backslash, or query/fragment. See docs/plugin-styles.md." },
+    "offline": {
+      "type": "object",
+      "properties": {
+        "assets": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "pattern": "^\\s*(?:screen\\.js|screen\\.html|settings\\.html|tour\\.json|(?:src|assets)/(?!\\.{1,2}(?:/|$))[^/\\\\?#]+(?:/(?!\\.{1,2}(?:/|$))[^/\\\\?#]+)*)\\s*$" },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false,
+      "description": "Optional plugin-root-relative files required by an offline app shell. Metadata only; declaration does not cache or load files."
+    }
   },
   "additionalProperties": true,
   "$defs": {

@@ -42,6 +42,9 @@ Plugins are the primary extension point. Each plugin lives in `plugins/<name>/` 
   "screen": "screen.html",
   "script": "screen.js",
   "styles": "assets/plugin.css",
+  "offline": {
+    "assets": ["screen.js", "src/main.js", "assets/plugin.css"]
+  },
   "routes": "routes.py",
   "settings": {
     "html": "settings.html",
@@ -61,6 +64,8 @@ All fields except `id` and `name` are optional. Plugins can have any combination
 `description`, `category`, and `icon` are **optional, additive v3 Pedalboard metadata** (surfaced in `/api/plugins`, consumed by the v3 Plugins page `static/v3/plugins-page.js`). `description` is a short one-sentence summary shown under the pedal name. `category` (`audio | creation | practice | game | tools`, free-form; unknown/absent → curated default → `"other"`) picks which pedalboard the plugin sits on. `icon` is an assets-relative thumbnail path (e.g. `"assets/thumb.png"`, ~square ~256×256, same containment rule as `styles`, served via `/api/plugins/<id>/assets/...`); if omitted the loader auto-detects `assets/thumb.png`, and plugins with no thumbnail get a default pedal graphic. All three are backward-compatible — omit them and the plugin still loads. See [docs/plugin-v3-ui.md](docs/plugin-v3-ui.md).
 
 `styles` is the **opt-in** for self-hosted CSS (Principle II — prebuilt Tailwind, no Play CDN). Core's `static/tailwind.min.css` only contains classes scanned from core source at build time, so a plugin installed at runtime (community / NAS) that uses classes core didn't scan — especially arbitrary values like `text-[11px]` — renders unstyled. Declaring `styles` makes the frontend inject one versioned `<link rel="stylesheet">` into `<head>` (covering the plugin's screen *and* its settings panel) pointing at the plugin's own compiled stylesheet. The value is a **plugin-root-relative path that must live under `assets/`** (e.g. `"assets/plugin.css"`) so it serves through the sandboxed `/api/plugins/<id>/assets/...` route. Build it with `corePlugins: { preflight: false }` (utilities only — core ships the single base reset; don't duplicate it) and **never** the Tailwind Play CDN. Plugins that use only core-guaranteed utilities, or ship no Tailwind, omit `styles` and are byte-for-byte unaffected. Full authoring guide + scaffold: [docs/plugin-styles.md](docs/plugin-styles.md).
+
+`offline.assets` optionally declares the plugin-root-relative runtime files an offline app shell needs. Entries must be unique files served by the standard plugin routes (`screen.js`, fixed HTML/tour routes, `src/...`, or `assets/...`); core validates the complete list and publishes it as `offline_assets` on `/api/plugins`. This metadata does not itself fetch, load, or cache anything.
 
 `settings.server_files` is the **opt-in** for the unified Settings export/import flow (feedBack#113). It's a list of relpaths under `context["config_dir"]` that the plugin wants included in user-triggered backups. A trailing `/` denotes a directory (recurse). Plugins that omit this field have no server-side files exported; their state lives entirely in browser `localStorage`, which is bundled wholesale on every export. Rules:
 - Relpaths only. Absolute paths, drive letters, `..` segments, and backslashes are rejected at load time with a `[Plugin]` warning.

@@ -791,6 +791,113 @@ def _is_valid_tour_manifest(val) -> bool:
     return False
 
 
+def _normalize_offline_assets(manifest: dict, plugin_id: str, plugin_dir: Path) -> list[str]:
+    """Validate a plugin-authored list of files served by standard routes.
+
+    The contribution is all-or-nothing: one malformed, unsupported, missing,
+    or escaping entry drops the complete list so a later cache consumer never
+    mistakes a partial graph for an offline-capable plugin.
+    """
+    if "offline" not in manifest:
+        return []
+    offline = manifest["offline"]
+
+    def reject(reason: str) -> list[str]:
+        log.warning(
+            "Plugin %r: invalid offline.assets declaration (%s); ignoring all assets",
+            plugin_id,
+            reason,
+        )
+        return []
+
+    if not isinstance(offline, dict):
+        return reject("offline must be an object")
+    unexpected_keys = set(offline) - {"assets"}
+    if unexpected_keys:
+        return reject(f"unsupported offline keys: {sorted(unexpected_keys)!r}")
+    raw_assets = offline.get("assets")
+    if raw_assets is None:
+        return []
+    if not isinstance(raw_assets, list):
+        return reject("assets must be a list")
+
+    try:
+        real_plugin_dir = plugin_dir.resolve()
+    except OSError as error:
+        return reject(f"plugin directory is unavailable: {error}")
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    script = manifest.get("script")
+    screen = manifest.get("screen")
+    settings = manifest.get("settings")
+    tour = manifest.get("tour")
+    fixed_targets = {
+        "screen.js": script if script else None,
+        "screen.html": screen if screen else None,
+        "settings.html": (
+            settings.get("html", "settings.html")
+            if isinstance(settings, dict) and settings
+            else ("settings.html" if settings else None)
+        ),
+        "tour.json": (
+            tour
+            if isinstance(tour, str) and _is_valid_tour_manifest(tour)
+            else (
+                tour.get("file", "tour.json")
+                if isinstance(tour, dict) and _is_valid_tour_manifest(tour)
+                else None
+            )
+        ),
+    }
+
+    for raw_path in raw_assets:
+        if not isinstance(raw_path, str):
+            return reject("every asset must be a string")
+        asset_path = raw_path.strip()
+        if not asset_path:
+            return reject("asset paths must be non-empty")
+        if asset_path in seen:
+            return reject(f"duplicate path {asset_path!r}")
+        seen.add(asset_path)
+
+        parts = asset_path.split("/")
+        if (
+            asset_path.startswith("/")
+            or re.match(r"^[A-Za-z]:", asset_path)
+            or "\\" in asset_path
+            or "?" in asset_path
+            or "#" in asset_path
+            or any(part in ("", ".", "..") for part in parts)
+        ):
+            return reject(f"unsafe path {asset_path!r}")
+
+        backing_path = asset_path
+        if asset_path in fixed_targets:
+            backing_path = fixed_targets[asset_path]
+            if backing_path is None:
+                return reject(f"{asset_path!r} has no matching manifest capability")
+            if not isinstance(backing_path, str) or not backing_path:
+                return reject(f"{asset_path!r} has an invalid backing filename")
+        elif parts[0] == "src" and len(parts) > 1:
+            if not manifest.get("script"):
+                return reject("src assets require a declared script")
+        elif parts[0] != "assets" or len(parts) == 1:
+            return reject(f"unsupported plugin route {asset_path!r}")
+
+        try:
+            candidate = (real_plugin_dir / backing_path).resolve()
+            if not candidate.is_relative_to(real_plugin_dir):
+                return reject(f"path escapes the plugin directory: {backing_path!r}")
+            if not candidate.is_file():
+                return reject(f"file does not exist: {backing_path!r}")
+        except (OSError, ValueError) as error:
+            return reject(f"cannot resolve {backing_path!r}: {error}")
+        normalized.append(asset_path)
+
+    return normalized
+
+
 def _normalize_export_paths(settings_field, plugin_id: str) -> list[str]:
     """Validate and normalize a plugin's `settings.server_files` manifest
     list into clean POSIX-style relpaths suitable for the settings
@@ -1406,6 +1513,7 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
         # DAW-style plugin UIs that need the viewport, not a scrolling content
         # page. Strict `is True` so a stray truthy value can't silently opt in.
         _fullscreen = manifest.get("fullscreen") is True
+        _offline_assets = _normalize_offline_assets(manifest, plugin_id, plugin_dir)
         return {
             "id": plugin_id,
             "name": manifest.get("name", plugin_id),
@@ -1442,6 +1550,7 @@ def load_plugins(app: FastAPI, context: dict, progress_cb=None, route_setup_fn=N
             # client can build the asset URL without a second manifest read.
             "has_styles": bool(manifest.get("styles")),
             "styles": manifest.get("styles"),
+            "offline_assets": _offline_assets,
             "standards": _normalize_string_list(manifest.get("standards")),
             "capabilities": _validated_capabilities,
             "capability_validation_warnings": _capability_validation_warnings,
@@ -2160,6 +2269,7 @@ def register_plugin_api(app: FastAPI):
                 # _nav_entry) working — styles is None when unset.
                 "has_styles": p.get("has_styles", False),
                 "styles": p.get("styles"),
+                "offline_assets": list(p.get("offline_assets", [])),
                 # capability-pipelines.v1 metadata, computed once by
                 # _nav_entry() at discovery and carried through graduation.
                 # The `.get()` fallbacks keep stubbed test entries (which build
@@ -2211,6 +2321,7 @@ def register_plugin_api(app: FastAPI):
                 "has_tour": e.get("has_tour", False),
                 "has_styles": e.get("has_styles", False),
                 "styles": e.get("styles"),
+                "offline_assets": list(e.get("offline_assets", [])),
                 # Pending entries are built from _nav_entry() too, so they
                 # carry the same capability-pipelines.v1 metadata — surface it
                 # so the Inspector can show still-installing plugins.

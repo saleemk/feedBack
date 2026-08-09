@@ -73,7 +73,7 @@ def test_service_worker_route_has_root_scope_and_no_stale_headers(client):
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
 
-def test_worker_precaches_only_offline_document_and_limits_navigation_fallback():
+def test_worker_keeps_recovery_document_cache_and_limits_navigation_fallback():
     source = (V3_DIR / "service-worker.js").read_text(encoding="utf-8")
 
     assert "const OFFLINE_URL = '/static/v3/offline.html'" in source

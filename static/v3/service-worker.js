@@ -1,6 +1,12 @@
 const CACHE_PREFIX = 'feedback-pwa-offline-';
 const CACHE_NAME = `${CACHE_PREFIX}v1`;
 const OFFLINE_URL = '/static/v3/offline.html';
+const SHELL_CACHE_PREFIX = 'feedback-pwa-shell-';
+const SHELL_CACHE_VERSION = 'v1';
+const SHELL_CACHE_NAME = `${SHELL_CACHE_PREFIX}${SHELL_CACHE_VERSION}`;
+const SHELL_MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
+const PLUGINS_URL = '/api/plugins';
+const SHELL_COMPLETE_URL = '/__feedback-pwa-shell-complete__';
 const APP_ENTRY_PATHS = new Set(['/', '/v3', '/v3/']);
 const TRANSIENT_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
 
@@ -9,22 +15,147 @@ async function offlineResponse() {
   return (await cache.match(OFFLINE_URL)) || Response.error();
 }
 
+function requireOk(response, label) {
+  if (!response || !response.ok) throw new Error(`Failed to fetch ${label}`);
+  return response;
+}
+
+function validateCoreAssets(manifest) {
+  if (!manifest || manifest.schema !== 'feedback.pwa-shell-assets.v1'
+      || !Array.isArray(manifest.assets)) {
+    throw new Error('Invalid PWA shell manifest');
+  }
+
+  const assets = new Set();
+  for (const path of manifest.assets) {
+    if (typeof path !== 'string' || !path.startsWith('/static/') || path.includes('\\')) {
+      throw new Error('Invalid core shell asset path');
+    }
+    const url = new URL(path, self.location.origin);
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(url.pathname);
+    } catch (_) {
+      throw new Error('Invalid core shell asset encoding');
+    }
+    if (url.origin !== self.location.origin || url.pathname !== path
+        || url.search || url.hash || !decodedPath.startsWith('/static/')
+        || decodedPath.split('/').some((part) => part === '.' || part === '..')
+        || assets.has(path)) {
+      throw new Error('Invalid core shell asset path');
+    }
+    assets.add(path);
+  }
+  return assets;
+}
+
+function pluginAssetUrls(rows) {
+  if (!Array.isArray(rows)) throw new Error('Invalid plugin discovery response');
+
+  const urls = new Set();
+  for (const plugin of rows) {
+    if (!plugin || typeof plugin !== 'object'
+        || plugin.status !== 'ready' || plugin.enabled === false) {
+      continue;
+    }
+    const declared = plugin.offline_assets;
+    if (declared == null || (Array.isArray(declared) && declared.length === 0)) continue;
+    if (!Array.isArray(declared) || typeof plugin.id !== 'string' || !plugin.id.trim()) {
+      throw new Error('Invalid eligible plugin metadata');
+    }
+
+    const encodedId = encodeURIComponent(plugin.id);
+    for (const path of declared) {
+      if (typeof path !== 'string' || !path.trim() || path !== path.trim()
+          || /^[A-Za-z]:/.test(path)
+          || path.includes('\\') || path.includes('?') || path.includes('#')) {
+        throw new Error('Invalid plugin offline asset path');
+      }
+      const segments = path.split('/');
+      if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+        throw new Error('Invalid plugin offline asset path');
+      }
+      urls.add(`/api/plugins/${encodedId}/${segments.map(encodeURIComponent).join('/')}`);
+    }
+  }
+  return urls;
+}
+
+async function populateShellCache() {
+  const existingKeys = await caches.keys();
+  if (existingKeys.includes(SHELL_CACHE_NAME)) {
+    const existing = await caches.open(SHELL_CACHE_NAME);
+    if (await existing.match(SHELL_COMPLETE_URL)) return;
+  }
+
+  await caches.delete(SHELL_CACHE_NAME);
+  const cache = await caches.open(SHELL_CACHE_NAME);
+  try {
+    const manifestRequest = new Request(SHELL_MANIFEST_URL, { cache: 'no-store' });
+    const manifestResponse = requireOk(
+      await fetch(manifestRequest),
+      'PWA shell manifest'
+    );
+    const manifest = await manifestResponse.clone().json();
+    const coreAssets = validateCoreAssets(manifest);
+
+    const pluginsRequest = new Request(PLUGINS_URL, { cache: 'no-store' });
+    const pluginsResponse = requireOk(await fetch(pluginsRequest), 'plugin discovery');
+    const plugins = await pluginsResponse.clone().json();
+    const pluginAssets = pluginAssetUrls(plugins);
+
+    await cache.put(manifestRequest, manifestResponse.clone());
+    await cache.put(pluginsRequest, pluginsResponse.clone());
+
+    const requiredUrls = new Set([...coreAssets, ...pluginAssets]);
+    for (const url of requiredUrls) {
+      const request = new Request(url, { cache: 'reload' });
+      const response = requireOk(await fetch(request), url);
+      await cache.put(request, response);
+    }
+
+    await cache.put(
+      new Request(SHELL_COMPLETE_URL),
+      new Response('complete', { headers: { 'Content-Type': 'text/plain' } })
+    );
+  } catch (error) {
+    await caches.delete(SHELL_CACHE_NAME);
+    throw error;
+  }
+}
+
+async function cleanupShellCaches() {
+  const keys = await caches.keys();
+  if (!keys.includes(SHELL_CACHE_NAME)) return;
+  const current = await caches.open(SHELL_CACHE_NAME);
+  if (!(await current.match(SHELL_COMPLETE_URL))) return;
+  await Promise.all(
+    keys
+      .filter((key) => key.startsWith(SHELL_CACHE_PREFIX) && key !== SHELL_CACHE_NAME)
+      .map((key) => caches.delete(key))
+  );
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
       .then((cache) => cache.add(new Request(OFFLINE_URL, { cache: 'reload' })))
+      .then(() => populateShellCache().catch(() => undefined))
       .then(() => self.skipWaiting())
   );
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(
-        keys
-          .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
-          .map((key) => caches.delete(key))
-      ))
+    Promise.all([
+      caches.keys()
+        .then((keys) => Promise.all(
+          keys
+            .filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME)
+            .map((key) => caches.delete(key))
+        )),
+      cleanupShellCaches(),
+    ])
       .then(() => self.clients.claim())
   );
 });

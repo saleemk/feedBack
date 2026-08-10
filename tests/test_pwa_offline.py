@@ -73,11 +73,15 @@ def test_service_worker_route_has_root_scope_and_no_stale_headers(client):
     assert response.headers["cache-control"] == "no-cache, no-store, must-revalidate"
 
 
-def test_worker_keeps_recovery_document_cache_and_limits_navigation_fallback():
+def test_worker_keeps_atomic_recovery_asset_cache_and_limits_navigation_fallback():
     source = (V3_DIR / "service-worker.js").read_text(encoding="utf-8")
 
+    assert "const CACHE_NAME = `${CACHE_PREFIX}v2`" in source
     assert "const OFFLINE_URL = '/static/v3/offline.html'" in source
-    assert source.count("cache.add(") == 1
+    assert "'/static/v3/offline-catalog.js'" in source
+    assert "'/static/js/device-catalog.js'" in source
+    assert source.count("cache.addAll(") == 1
+    assert "await caches.delete(CACHE_NAME)" in source
     assert "event.request.mode !== 'navigate'" in source
     assert "event.request.method !== 'GET'" in source
     assert "new Set(['/', '/v3', '/v3/'])" in source
@@ -107,8 +111,21 @@ def test_offline_document_is_self_contained_and_retries(client):
     assert "Can't reach your fee[dB]ack server" in response.text
     assert "does not mean your songs or profile data were lost" in response.text
     assert "window.location.reload()" in response.text
+    assert 'id="offline-app" hidden' in response.text
+    assert 'type="module" src="/static/v3/offline-catalog.js"' in response.text
+    assert response.text.index("window.location.reload()") < response.text.index(
+        'src="/static/v3/offline-catalog.js"'
+    )
+    assert "/static/app.js" not in response.text
+    assert "plugin" not in response.text.lower()
     assert "<link" not in response.text
-    assert " src=" not in response.text
+
+
+def test_offline_only_assets_stay_outside_normal_shell_manifest():
+    manifest = json.loads((V3_DIR / "pwa-shell-assets.json").read_text(encoding="utf-8"))
+
+    assert "/static/v3/offline.html" not in manifest["assets"]
+    assert "/static/v3/offline-catalog.js" not in manifest["assets"]
 
 
 def test_existing_static_revalidation_contract_is_unchanged(client):

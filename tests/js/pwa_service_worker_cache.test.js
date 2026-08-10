@@ -11,7 +11,12 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v1';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v2';
+const RECOVERY_ASSETS = [
+    '/static/v3/offline.html',
+    '/static/v3/offline-catalog.js',
+    '/static/js/device-catalog.js',
+];
 const SHELL_CACHE = 'feedback-pwa-shell-v1';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
@@ -85,6 +90,19 @@ function createHarness({ responses = {}, seedCaches = {}, fetchHook = null } = {
             const response = await fakeFetch(request);
             if (!response.ok) throw new Error('cache.add received a non-OK response');
             await this.put(request, response);
+        }
+        async addAll(requests) {
+            operations.push({ type: 'addAll', cache: this.name });
+            const staged = [];
+            for (const request of requests) {
+                const response = await fakeFetch(request);
+                if (!response.ok) throw new Error('cache.addAll received a non-OK response');
+                staged.push([urlPath(request), response]);
+            }
+            for (const [url, response] of staged) {
+                operations.push({ type: 'put', cache: this.name, url });
+                this.entries.set(url, response.clone());
+            }
         }
     }
 
@@ -176,6 +194,8 @@ function successfulResponses() {
         pluginsBody,
         responses: {
             '/static/v3/offline.html': new FakeResponse('recovery'),
+            '/static/v3/offline-catalog.js': new FakeResponse('offline catalog'),
+            '/static/js/device-catalog.js': new FakeResponse('catalog storage'),
             [MANIFEST_URL]: new FakeResponse(manifestBody, { headers: { ETag: 'manifest' } }),
             [PLUGINS_URL]: new FakeResponse(pluginsBody, { headers: { ETag: 'plugins' } }),
             '/static/app.js': new FakeResponse('core app'),
@@ -193,6 +213,10 @@ test('successful install publishes one complete shell candidate', async () => {
     await harness.dispatchLifecycle('install');
 
     assert.equal(harness.skipWaitingCalls(), 1);
+    assert.deepEqual(
+        Array.from(harness.cache(RECOVERY_CACHE).entries.keys()).sort(),
+        RECOVERY_ASSETS.slice().sort(),
+    );
     const shell = harness.cache(SHELL_CACHE);
     assert.ok(shell);
     assert.deepEqual(Array.from(shell.entries.keys()).sort(), [
@@ -250,6 +274,28 @@ test('required asset failure deletes the candidate without failing recovery inst
     );
 });
 
+test('recovery asset failure publishes neither a partial cache nor the worker', async () => {
+    const configured = successfulResponses();
+    configured.responses['/static/v3/offline-catalog.js'] = new FakeResponse(
+        'failed',
+        { status: 503 },
+    );
+    const harness = createHarness({
+        responses: configured.responses,
+        seedCaches: {
+            'feedback-pwa-offline-v1': {
+                '/static/v3/offline.html': new FakeResponse('older recovery'),
+            },
+        },
+    });
+
+    await assert.rejects(harness.dispatchLifecycle('install'), /cache\.addAll/);
+    assert.equal(harness.hasCache(RECOVERY_CACHE), false);
+    assert.equal(harness.hasCache('feedback-pwa-offline-v1'), true);
+    assert.equal(harness.hasCache(SHELL_CACHE), false);
+    assert.equal(harness.skipWaitingCalls(), 0);
+});
+
 test('malformed manifest or eligible plugin metadata fails the shell candidate closed', async () => {
     const cases = [
         {
@@ -272,6 +318,8 @@ test('malformed manifest or eligible plugin metadata fails the shell candidate c
 
     for (const responses of cases) {
         responses['/static/v3/offline.html'] = new FakeResponse('recovery');
+        responses['/static/v3/offline-catalog.js'] = new FakeResponse('offline catalog');
+        responses['/static/js/device-catalog.js'] = new FakeResponse('catalog storage');
         const harness = createHarness({ responses });
         await harness.dispatchLifecycle('install');
         assert.equal(harness.hasCache(SHELL_CACHE), false);
@@ -355,6 +403,45 @@ test('matching current shell resources stay network-first and mask only transien
     assert.equal(serverError.status, 500);
     assert.equal(await serverError.text(), 'server error');
     assert.equal(harness.fetches.length, 7);
+});
+
+test('matching recovery resources stay network-first with exact cached fallback', async () => {
+    const network = [
+        new FakeResponse('online module'),
+        new Error('network down'),
+        new FakeResponse('bad gateway', { status: 502 }),
+        new FakeResponse('unavailable', { status: 503 }),
+        new FakeResponse('timeout', { status: 504 }),
+        new FakeResponse('missing', { status: 404 }),
+        new FakeResponse('server error', { status: 500 }),
+        new FakeResponse('query unavailable', { status: 503 }),
+    ];
+    const harness = createHarness({
+        seedCaches: {
+            [RECOVERY_CACHE]: {
+                '/static/v3/offline-catalog.js': new FakeResponse('cached module'),
+            },
+        },
+        fetchHook: async () => {
+            const result = network.shift();
+            if (result instanceof Error) throw result;
+            return result;
+        },
+    });
+    const request = () => new FakeRequest('/static/v3/offline-catalog.js');
+
+    assert.equal(await (await harness.dispatchFetch(request())).text(), 'online module');
+    for (let index = 0; index < 4; index += 1) {
+        assert.equal(await (await harness.dispatchFetch(request())).text(), 'cached module');
+    }
+    assert.equal((await harness.dispatchFetch(request())).status, 404);
+    assert.equal((await harness.dispatchFetch(request())).status, 500);
+    const queryMismatch = await harness.dispatchFetch(
+        new FakeRequest('/static/v3/offline-catalog.js?v=1'),
+    );
+    assert.equal(queryMismatch.status, 503);
+    assert.equal(await queryMismatch.text(), 'query unavailable');
+    assert.equal(harness.fetches.length, 8);
 });
 
 test('plugin discovery and versioned stable assets use their exact cached snapshots', async () => {

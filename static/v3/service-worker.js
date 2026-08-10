@@ -1,6 +1,11 @@
 const CACHE_PREFIX = 'feedback-pwa-offline-';
-const CACHE_NAME = `${CACHE_PREFIX}v1`;
+const CACHE_NAME = `${CACHE_PREFIX}v2`;
 const OFFLINE_URL = '/static/v3/offline.html';
+const RECOVERY_ASSET_URLS = new Set([
+  OFFLINE_URL,
+  '/static/v3/offline-catalog.js',
+  '/static/js/device-catalog.js',
+]);
 const SHELL_CACHE_PREFIX = 'feedback-pwa-shell-';
 const SHELL_CACHE_VERSION = 'v1';
 const SHELL_CACHE_NAME = `${SHELL_CACHE_PREFIX}${SHELL_CACHE_VERSION}`;
@@ -13,6 +18,21 @@ const TRANSIENT_UNAVAILABLE_STATUSES = new Set([502, 503, 504]);
 async function offlineResponse() {
   const cache = await caches.open(CACHE_NAME);
   return (await cache.match(OFFLINE_URL)) || Response.error();
+}
+
+async function populateRecoveryCache() {
+  await caches.delete(CACHE_NAME);
+  const cache = await caches.open(CACHE_NAME);
+  const requests = Array.from(
+    RECOVERY_ASSET_URLS,
+    (url) => new Request(url, { cache: 'reload' })
+  );
+  try {
+    await cache.addAll(requests);
+  } catch (error) {
+    await caches.delete(CACHE_NAME);
+    throw error;
+  }
 }
 
 function requireOk(response, label) {
@@ -177,10 +197,22 @@ async function shellResourceResponse(request) {
   }
 }
 
+async function recoveryResourceResponse(request) {
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(request);
+  if (!cached) return fetch(request);
+
+  try {
+    const response = await fetch(request);
+    return TRANSIENT_UNAVAILABLE_STATUSES.has(response.status) ? cached : response;
+  } catch (_) {
+    return cached;
+  }
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => cache.add(new Request(OFFLINE_URL, { cache: 'reload' })))
+    populateRecoveryCache()
       .then(() => populateShellCache().catch(() => undefined))
       .then(() => self.skipWaiting())
   );
@@ -208,6 +240,10 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (event.request.mode !== 'navigate') {
+    if (RECOVERY_ASSET_URLS.has(url.pathname)) {
+      event.respondWith(recoveryResourceResponse(event.request));
+      return;
+    }
     const isShellResource = url.pathname.startsWith('/static/')
       || url.pathname === PLUGINS_URL
       || url.pathname.startsWith(`${PLUGINS_URL}/`);

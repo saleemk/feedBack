@@ -2,51 +2,208 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#111827">
-    <title>fee[dB]ack is offline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#151716">
+    <title>fee[dB]ack offline</title>
     <style>
-        :root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        :root {
+            color-scheme: dark;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #151716;
+            color: #f7f5ef;
+        }
         * { box-sizing: border-box; }
+        [hidden] { display: none !important; }
         body {
             min-height: 100vh;
+            min-height: 100dvh;
             margin: 0;
-            display: grid;
-            place-items: center;
-            padding: 2rem;
-            background: #111827;
-            color: #f8fafc;
+            background: #151716;
+            color: #f7f5ef;
         }
-        main { width: min(32rem, 100%); }
-        .brand { margin: 0 0 2.5rem; color: #22d3ee; font-size: 1rem; font-weight: 800; }
-        h1 { margin: 0; font-size: clamp(1.8rem, 7vw, 2.6rem); line-height: 1.1; }
-        p { margin: 1rem 0 0; color: #cbd5e1; font-size: 1rem; line-height: 1.6; }
-        button {
-            margin-top: 1.75rem;
-            min-height: 3rem;
-            padding: 0.75rem 1.25rem;
-            border: 0;
-            border-radius: 0.5rem;
-            background: #22d3ee;
-            color: #082f49;
-            font: inherit;
+        button, input { font: inherit; }
+        button { cursor: pointer; }
+        button:focus-visible, input:focus-visible {
+            outline: 3px solid #f2c14e;
+            outline-offset: 2px;
+        }
+        .shell {
+            width: min(54rem, 100%);
+            min-height: 100vh;
+            min-height: 100dvh;
+            margin: 0 auto;
+            padding: env(safe-area-inset-top) env(safe-area-inset-right)
+                env(safe-area-inset-bottom) env(safe-area-inset-left);
+        }
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            min-height: 4rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.625rem 1rem;
+            border-bottom: 1px solid #383c39;
+            background: #151716;
+        }
+        .brand { margin: 0; color: #42d6c1; font-weight: 800; }
+        .status {
+            min-width: 0;
+            margin-right: auto;
+            color: #f2c14e;
+            font-size: 0.8125rem;
+            font-weight: 700;
+        }
+        .retry, .primary {
+            min-height: 2.75rem;
+            border: 1px solid transparent;
+            border-radius: 0.375rem;
+            padding: 0.625rem 1rem;
+            background: #42d6c1;
+            color: #092f2a;
             font-weight: 800;
-            cursor: pointer;
         }
-        button:focus-visible { outline: 3px solid #facc15; outline-offset: 3px; }
+        .retry { flex: 0 0 auto; }
+        .content { padding: 1.5rem 1rem 2rem; }
+        .recovery { max-width: 36rem; padding-top: 10vh; }
+        h1 { margin: 0; font-size: 1.75rem; line-height: 1.2; }
+        h2 { margin: 0; font-size: 1.25rem; }
+        p { margin: 0.75rem 0 0; color: #c9cdc9; line-height: 1.55; }
+        .offline-app { min-width: 0; }
+        .destinations {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 0.375rem;
+            margin-bottom: 1.5rem;
+            padding: 0.25rem;
+            border: 1px solid #383c39;
+            border-radius: 0.5rem;
+            background: #202321;
+        }
+        .destination {
+            min-height: 2.75rem;
+            border: 0;
+            border-radius: 0.25rem;
+            background: transparent;
+            color: #c9cdc9;
+            font-weight: 750;
+        }
+        .destination[aria-current="page"] {
+            background: #f7f5ef;
+            color: #202321;
+        }
+        .home-summary {
+            margin: 1.25rem 0;
+            padding: 1rem 0;
+            border-top: 1px solid #383c39;
+            border-bottom: 1px solid #383c39;
+        }
+        .song-count { color: #f7f5ef; font-size: 1.25rem; font-weight: 800; }
+        .captured { color: #9fa69f; font-size: 0.875rem; }
+        .capability { max-width: 40rem; }
+        .library-header {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .result-count { margin: 0; color: #9fa69f; font-size: 0.875rem; }
+        label {
+            display: block;
+            margin-bottom: 1rem;
+            color: #c9cdc9;
+            font-size: 0.8125rem;
+            font-weight: 700;
+        }
+        input[type="search"] {
+            width: 100%;
+            min-height: 3rem;
+            margin-top: 0.375rem;
+            border: 1px solid #555b56;
+            border-radius: 0.375rem;
+            padding: 0.625rem 0.75rem;
+            background: #202321;
+            color: #f7f5ef;
+        }
+        .song-list { margin: 0; padding: 0; list-style: none; }
+        .song-row {
+            display: grid;
+            gap: 0.1875rem;
+            min-height: 3.5rem;
+            padding: 0.6875rem 0;
+            border-bottom: 1px solid #303431;
+        }
+        .song-title { overflow-wrap: anywhere; color: #f7f5ef; font-weight: 700; }
+        .song-artist { overflow-wrap: anywhere; color: #9fa69f; font-size: 0.875rem; }
+        .empty { padding: 2rem 0; color: #9fa69f; }
+        @media (min-width: 40rem) {
+            .topbar { padding-inline: 1.5rem; }
+            .content { padding: 2rem 1.5rem 3rem; }
+            .destinations { width: 20rem; }
+        }
+        @media (max-height: 32rem) and (orientation: landscape) {
+            .topbar { min-height: 3.5rem; }
+            .content { padding-top: 0.875rem; }
+            .recovery { padding-top: 1rem; }
+            .destinations { margin-bottom: 1rem; }
+            .home-summary { margin: 0.75rem 0; padding: 0.75rem 0; }
+        }
     </style>
 </head>
 <body>
-    <main>
-        <p class="brand">fee[dB]ack</p>
-        <h1>Can't reach your fee[dB]ack server</h1>
-        <p>This device may be offline, or the server may be unavailable. This does not mean your songs or profile data were lost.</p>
-        <button type="button" id="retry">Retry</button>
-    </main>
+    <div class="shell">
+        <header class="topbar">
+            <p class="brand">fee[dB]ack</p>
+            <span class="status">Server unavailable</span>
+            <button type="button" class="retry" id="retry">Retry</button>
+        </header>
+
+        <main class="content">
+            <section class="recovery" id="offline-recovery" aria-live="polite">
+                <h1>Can't reach your fee[dB]ack server</h1>
+                <p>This device may be offline, or the server may be unavailable. This does not mean your songs or profile data were lost.</p>
+            </section>
+
+            <div class="offline-app" id="offline-app" hidden>
+                <nav class="destinations" aria-label="Offline destinations">
+                    <button type="button" class="destination" id="offline-nav-home" aria-current="page">Home</button>
+                    <button type="button" class="destination" id="offline-nav-library">Library</button>
+                </nav>
+
+                <section id="offline-home">
+                    <h1>Offline Home</h1>
+                    <p>Your saved device catalog is available while the server is unavailable.</p>
+                    <div class="home-summary">
+                        <p class="song-count" id="offline-song-count"></p>
+                        <p class="captured" id="offline-captured-at"></p>
+                    </div>
+                    <button type="button" class="primary" id="offline-browse-library">Browse Library</button>
+                    <p class="capability">This catalog is browse-only. Playback requires reconnecting to your fee[dB]ack server.</p>
+                </section>
+
+                <section id="offline-library" hidden>
+                    <div class="library-header">
+                        <h1>Library</h1>
+                        <p class="result-count" id="offline-result-count" aria-live="polite"></p>
+                    </div>
+                    <label for="offline-search">
+                        Search title or artist
+                        <input type="search" id="offline-search" autocomplete="off" spellcheck="false">
+                    </label>
+                    <ul class="song-list" id="offline-song-list"></ul>
+                    <p class="empty" id="offline-library-empty" hidden></p>
+                </section>
+            </div>
+        </main>
+    </div>
+
     <script>
         document.getElementById('retry').addEventListener('click', function () {
             window.location.reload();
         });
     </script>
+    <script type="module" src="/static/v3/offline-catalog.js"></script>
 </body>
 </html>

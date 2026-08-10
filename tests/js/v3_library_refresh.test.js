@@ -27,6 +27,20 @@ test('app.js emits library:changed when a Settings rescan completes', () => {
         'a completed rescan must broadcast library:changed for the v3 grid');
 });
 
+test('startup scan emits once after a successful library refresh', () => {
+    const poller = APP.match(/async function pollScanStatus\(\)[\s\S]*?\n\}/);
+    assert.ok(poller, 'startup scan poller must exist');
+    const completion = poller[0].match(/else\s*\{[\s\S]*?startup-scan-complete[\s\S]*?\}/);
+    assert.ok(completion, 'successful startup scan completion must emit a library change');
+    assert.match(poller[0], /if\s*\(_scanPollId\s*===\s*null\)\s*return;/,
+        'overlapping poll callbacks must not publish completion twice');
+    assert.match(completion[0], /await\s+loadLibrary\(\)[\s\S]*?emit\(/,
+        'startup completion emits only after the library refresh settles');
+    assert.doesNotMatch(poller[0].match(/stage\s*===\s*['"]error['"][\s\S]*?return;/)?.[0] || '',
+        /startup-scan-complete/,
+        'failed startup scans must not emit completion');
+});
+
 test('songs.js handles library:changed — reload when active, else mark dirty', () => {
     const m = SONGS.match(/sm\.on\(\s*['"]library:changed['"][\s\S]{0,500}?\}\);/);
     assert.ok(m, 'songs.js must subscribe to library:changed');

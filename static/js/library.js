@@ -2003,6 +2003,7 @@ async function pollScanStatus() {
     try {
         const resp = await fetch('/api/scan-status');
         const data = await resp.json();
+        if (_scanPollId === null) return;
         if (data.stage === 'error' && data.error) {
             // Surface the error in the banner and stop polling.
             showScanBanner();
@@ -2031,13 +2032,14 @@ async function pollScanStatus() {
             }
             if (firstNote) firstNote.classList.toggle('hidden', !data.is_first_scan);
         } else {
-            if (document.getElementById('scan-banner')) {
-                hideScanBanner();
-                L.treeStats = null;  // Refresh stats
-                loadLibrary();
-            }
             clearInterval(_scanPollId);
             _scanPollId = null;
+            hideScanBanner();
+            L.treeStats = null;  // Refresh stats
+            await loadLibrary();
+            if (window.feedBack) {
+                window.feedBack.emit('library:changed', { reason: 'startup-scan-complete' });
+            }
         }
     } catch (e) { /* ignore */ }
 }

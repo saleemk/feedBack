@@ -52,6 +52,7 @@ import {
     _snapshotResumeSession,
     resumeLastSession,
 } from './js/resume-session.js';
+import { startDeviceCatalogCapture } from './js/device-catalog-capture.js';
 
 import {
     _applyMastery,
@@ -803,6 +804,7 @@ if (_feedBackExisting && _feedBackExisting !== window.feedBack) {
 }
 window.feedback = window.feedBack;
 window.slopsmith = window.feedback;
+startDeviceCatalogCapture(window.feedBack);
 
 function _currentPlaybackSnapshot() {
     const song = window.feedBack && window.feedBack.currentSong || null;

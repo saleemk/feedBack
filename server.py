@@ -58,6 +58,7 @@ from routers import song as song_router
 from routers import library as library_router
 from routers import enrichment as enrichment_routes
 from routers import media as media_router
+from routers import practice_package as practice_package_router
 from routers import artist as artist_router
 import sloppak as sloppak_mod
 import loosefolder as loosefolder_mod
@@ -1608,6 +1609,9 @@ _extract_cache_lock = threading.Lock()
 
 # ── Media/file-serving routes → routers/media.py (R3) ───────────────────────
 app.include_router(media_router.router)
+
+# ── Downloadable practice packages → routers/practice_package.py ─────────────
+app.include_router(practice_package_router.router)
 
 
 

@@ -24,6 +24,23 @@ const validatePracticePackageManifest = (manifest) => ({
     chartUrl: manifest.chart.url,
     audioUrl: manifest.audio.url,
 });`,
+    ).replace(
+        /import \{[\s\S]*?\} from '\.\.\/js\/practice-package-client\.js';/,
+        `const buildPracticeManifestUrlCore = (options, baseHref = 'http://localhost/') => {
+    const url = new URL('/api/practice-package/manifest', baseHref);
+    url.searchParams.set('filename', String(options.filename));
+    url.searchParams.set('arrangement', String(options.arrangement));
+    url.searchParams.set('naming_mode', String(options.namingMode));
+    url.searchParams.set('drum_part', String(options.drumPart));
+    return \`\${url.pathname}\${url.search}\`;
+};
+const downloadPracticePackage = (options) => {
+    const client = globalThis.__practicePackageSpikeClient;
+    if (!client || typeof client.downloadPracticePackage !== 'function') {
+        throw new Error('Missing practice-package spike client test hook');
+    }
+    return client.downloadPracticePackage(options);
+};`,
     );
     const encoded = Buffer.from(source).toString('base64');
     importSerial += 1;
@@ -163,6 +180,7 @@ async function createControllerFixture(module, packages, {
     fetch = globalThis.fetch,
     savePackage = async () => {},
     deletePackage = async () => {},
+    downloadPackage = null,
     AudioContext = undefined,
 } = {}) {
     const elements = new Map();
@@ -220,6 +238,47 @@ async function createControllerFixture(module, packages, {
         AudioContext,
         store,
     });
+    globalThis.__practicePackageSpikeClient = {
+        downloadPracticePackage: downloadPackage || (async (options) => {
+            const manifestUrl = module.buildPracticeManifestUrl({
+                filename: options.filename,
+                arrangement: options.arrangement,
+                namingMode: options.namingMode,
+                drumPart: options.drumPart,
+            }, options.baseHref);
+            const manifestResponse = await options.fetch(manifestUrl, { cache: 'no-store' });
+            if (!manifestResponse.ok) {
+                throw new Error(`Manifest fetch failed (${manifestResponse.status})`);
+            }
+            const manifest = await manifestResponse.json();
+            const requests = [
+                options.fetch(new URL(manifest.chart.url, options.locationRef.href).href, { cache: 'no-store' }),
+                options.fetch(new URL(manifest.audio.url, options.locationRef.href).href, { cache: 'no-store' }),
+            ];
+            let chartResponse;
+            let audioResponse;
+            try {
+                [chartResponse, audioResponse] = await Promise.all(requests);
+            } catch (error) {
+                const results = await Promise.allSettled(requests);
+                await Promise.all(results.map(async (result) => {
+                    if (result.status !== 'fulfilled') return;
+                    try { await result.value.body.cancel(); } catch {}
+                }));
+                throw error;
+            }
+            return options.savePackage(manifest, {
+                chart: {
+                    stream: chartResponse.body,
+                    mediaType: chartResponse.headers.get('content-type') || '',
+                },
+                audio: {
+                    stream: audioResponse.body,
+                    mediaType: audioResponse.headers.get('content-type') || '',
+                },
+            });
+        }),
+    };
     await controller.start();
     return {
         controller,

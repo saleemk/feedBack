@@ -901,7 +901,8 @@
         // uses them, so for the stock library both strings are empty — the card
         // renders exactly as before.
         const reg = sm && sm.libraryCardActions;
-        const acts = (reg && typeof reg.list === 'function') ? reg.list(song) : [];
+        const actionSong = Object.assign({}, song, { provider: state.provider });
+        const acts = (reg && typeof reg.list === 'function') ? reg.list(actionSong) : [];
         const actBtn = (a) =>
             '<button data-act-card="' + esc(a.id) + '" title="' + esc(a.label || a.id) + '" aria-label="' + esc(a.label || a.id) + '"' +
             (a.enabled === false ? ' disabled' : '') +
@@ -951,10 +952,11 @@
         // (as before) would orphan its document-level click closer.
         if (_closeCardMenu) _closeCardMenu();
         const reg = sm && sm.libraryCardActions;
+        const actionSong = Object.assign({}, song, { provider: state.provider });
         // Only show actions intended for the overflow menu — actions placed
         // 'inline'/'overlay' get their own affordances on the card (see songCard).
         // Undefined placement defaults to the menu.
-        const items = (reg ? reg.list(song) : []).filter((a) => !a.placement || a.placement === 'menu');
+        const items = (reg ? reg.list(actionSong) : []).filter((a) => !a.placement || a.placement === 'menu');
         const menu = document.createElement('div');
         // pos (right-click) positions the menu at the pointer via `fixed`;
         // the ⋮ button keeps the absolute top-right anchor.
@@ -1049,7 +1051,7 @@
             }
             if (id === '__getinfo') { openGetInfo(playTarget); return; }
             if (id === '__remove') { await removeSongsFlow(song); return; }
-            if (reg) await reg.run(id, song, { source: 'v3-songs' });
+            if (reg) await reg.run(id, actionSong, { source: 'v3-songs' });
         }));
         // Tree rows ride the (ungrouped) artists endpoint, so they don't carry
         // chart_count/work_key — resolve the work lazily and slot a
@@ -1545,7 +1547,8 @@
             el.querySelectorAll('[data-act-card]').forEach((ab) => ab.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 const reg = sm && sm.libraryCardActions;
-                if (reg) await reg.run(ab.getAttribute('data-act-card'), song, { source: 'v3-songs' });
+                const actionSong = Object.assign({}, song, { provider: state.provider });
+                if (reg) await reg.run(ab.getAttribute('data-act-card'), actionSong, { source: 'v3-songs' });
             }));
         });
     }

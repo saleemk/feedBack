@@ -5,8 +5,11 @@ import {
     openPracticePackageStore,
     readCompletePracticePackage,
     saveCompletePracticePackage,
-    validatePracticePackageManifest,
 } from '../js/practice-package-store.js';
+import {
+    buildPracticeManifestUrl as buildPracticeManifestUrlCore,
+    downloadPracticePackage,
+} from '../js/practice-package-client.js';
 
 const ERROR_CAUSE_NAME_MAX_CHARACTERS = 64;
 const ERROR_CAUSE_MESSAGE_MAX_CHARACTERS = 240;
@@ -17,12 +20,7 @@ export function buildPracticeManifestUrl({
     namingMode = 'legacy',
     drumPart = '',
 }, baseHref = 'http://localhost/') {
-    const url = new URL('/api/practice-package/manifest', baseHref);
-    url.searchParams.set('filename', String(filename));
-    url.searchParams.set('arrangement', String(arrangement));
-    url.searchParams.set('naming_mode', String(namingMode));
-    url.searchParams.set('drum_part', String(drumPart));
-    return `${url.pathname}${url.search}`;
+    return buildPracticeManifestUrlCore({ filename, arrangement, namingMode, drumPart }, baseHref);
 }
 
 function formatBytes(value) {
@@ -308,68 +306,17 @@ export function createPracticePackageStorageSpike({
         return packages;
     }
 
-    function localArtifactUrl(candidate, kind) {
-        const url = new URLRef(candidate, locationRef.href);
-        if (url.origin !== locationRef.origin) {
-            throw new Error(`${kind} URL must be same-origin`);
-        }
-        if (kind === 'Chart' && url.pathname !== '/api/practice-package/chart') {
-            throw new Error('Chart URL is not a practice-package chart endpoint');
-        }
-        if (kind === 'Audio'
-                && (!url.pathname.startsWith('/api/sloppak/')
-                    || !url.pathname.includes('/file/'))) {
-            throw new Error('Audio URL is not a contained sloppak media endpoint');
-        }
-        return url.href;
-    }
-
-    async function fetchArtifact(url, label) {
-        const response = await fetchRef(url, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`${label} fetch failed (${response.status})`);
-        if (!response.body || typeof response.body.pipeTo !== 'function') {
-            throw new Error(`${label} response streaming is unavailable`);
-        }
-        return {
-            stream: response.body,
-            mediaType: response.headers.get('content-type') || '',
-        };
-    }
-
-    async function fetchPackageArtifacts(chartUrl, audioUrl) {
-        const requests = [
-            fetchArtifact(chartUrl, 'Chart'),
-            fetchArtifact(audioUrl, 'Audio'),
-        ];
-        try {
-            return await Promise.all(requests);
-        } catch (error) {
-            const results = await Promise.allSettled(requests);
-            await Promise.all(results.map(async (result) => {
-                if (result.status !== 'fulfilled') return;
-                try { await result.value.stream.cancel(); } catch {}
-            }));
-            throw error;
-        }
-    }
-
     async function downloadPackage() {
-        const manifestUrl = buildPracticeManifestUrl({
+        const metadata = await downloadPracticePackage({
             filename: element('source-filename').value.trim(),
             arrangement: Number.parseInt(element('arrangement-index').value, 10),
             namingMode: element('naming-mode').value,
             drumPart: element('drum-part').value.trim(),
-        }, locationRef.href);
-        const manifestResponse = await fetchRef(manifestUrl, { cache: 'no-store' });
-        if (!manifestResponse.ok) {
-            throw new Error(`Manifest fetch failed (${manifestResponse.status})`);
-        }
-        const manifest = await manifestResponse.json();
-        const descriptor = validatePracticePackageManifest(manifest);
-        const chartUrl = localArtifactUrl(descriptor.chartUrl, 'Chart');
-        const audioUrl = localArtifactUrl(descriptor.audioUrl, 'Audio');
-        const [chart, audio] = await fetchPackageArtifacts(chartUrl, audioUrl);
-        const metadata = await store.savePackage(manifest, { chart, audio });
+            baseHref: locationRef.href,
+            locationRef,
+            fetch: fetchRef,
+            savePackage: store.savePackage,
+        });
         await refreshPackages(metadata.revision);
         await refreshEstimate();
         setResult(`Stored complete package ${metadata.revision}`);

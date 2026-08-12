@@ -5,6 +5,7 @@ import {
     openPracticePackageStore,
 } from '../js/practice-package-store.js';
 import { downloadPracticePackage } from '../js/practice-package-client.js';
+import { playOfflinePracticePackage } from '../js/session.js';
 
 const TOOLBAR_ID = 'v3-songs-offline';
 const PANEL_ID = 'v3-offline-panel';
@@ -56,6 +57,7 @@ export function createOfflinePracticeController({
         close: closePracticePackageStore,
     },
     download = downloadPracticePackage,
+    launch = playOfflinePracticePackage,
     confirm = (options) => defaultConfirm(options, windowRef),
 } = {}) {
     let packages = [];
@@ -107,19 +109,38 @@ export function createOfflinePracticeController({
                     esc(packageLabel(metadata)) + '</div><div class="text-xs text-fb-textDim">' +
                     esc(metadata.arrangement.name) + ' chart · ' + formatBytes(bytes) +
                     ' · stored ' + esc(formatDate(metadata.storedAt)) + '</div></div>' +
+                    '<div class="flex shrink-0 gap-2"><button type="button" data-offline-play="' + esc(metadata.revision) +
+                    '" class="rounded-md border border-fb-accent/60 px-2 py-1 text-xs text-fb-text">Practice</button>' +
                     '<button type="button" data-offline-delete="' + esc(metadata.revision) +
-                    '" class="shrink-0 rounded-md border border-fb-border/60 px-2 py-1 text-xs text-fb-text">Delete</button></li>';
+                    '" class="rounded-md border border-fb-border/60 px-2 py-1 text-xs text-fb-text">Delete</button></div></li>';
             }).join('')
             : '<li class="border-t border-fb-border/40 py-3 text-sm text-fb-textDim">No offline bundles stored.</li>';
         return '<section id="' + PANEL_ID + '" class="mb-4 border-y border-fb-border/50 bg-fb-sidebar/80 px-4 py-3" aria-labelledby="v3-offline-heading">' +
             '<div class="flex items-start justify-between gap-3"><div><h2 id="v3-offline-heading" class="text-sm font-semibold text-fb-text">Offline practice</h2>' +
-            '<p class="mt-1 text-xs text-fb-textDim">Stored bundles are complete full mixes and default charts. They are not playable offline yet.</p></div>' +
+            '<p class="mt-1 text-xs text-fb-textDim">Stored bundles play the downloaded full mix with the default chart.</p></div>' +
             '<button type="button" data-offline-close class="shrink-0 text-xs text-fb-textDim">Close</button></div>' +
             '<p class="mt-3 text-xs text-fb-textDim">' + esc(estimate) + '</p><ul class="mt-2">' + rows + '</ul></section>';
     }
 
     function bindPanel(panel) {
         panel.querySelector('[data-offline-close]')?.addEventListener('click', () => closePanel(panel));
+        panel.querySelectorAll('[data-offline-play]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const revision = button.getAttribute('data-offline-play');
+                const metadata = packages.find((entry) => entry.revision === revision);
+                if (!metadata || busy) return;
+                busy = true;
+                try {
+                    await launch(revision);
+                    notify(windowRef, 'Offline practice ready', packageLabel(metadata));
+                    const current = documentRef?.getElementById(PANEL_ID);
+                    if (current) closePanel(current);
+                } catch (error) {
+                    notify(windowRef, 'Offline launch failed', error.message || String(error), '!', '#EF4444');
+                    try { await refresh(); } catch (_) {}
+                } finally { busy = false; }
+            });
+        });
         panel.querySelectorAll('[data-offline-delete]').forEach((button) => {
             button.addEventListener('click', async () => {
                 const revision = button.getAttribute('data-offline-delete');
@@ -176,7 +197,7 @@ export function createOfflinePracticeController({
         const ok = await confirm({
             title: 'Download for offline practice?',
             html: 'Download <strong>' + esc(label) + '</strong> for later use?' +
-                '<p class="mt-2 text-xs text-fb-textDim">This stores the full mix and the default chart. Offline playback is not available yet.</p>',
+                '<p class="mt-2 text-xs text-fb-textDim">This stores the full mix and the default chart for offline practice.</p>',
             confirmText: 'Download',
         });
         if (!ok) return;

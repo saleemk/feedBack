@@ -41,6 +41,13 @@ import {
 } from './js/settings-io.js';
 import { audio } from './js/audio-el.js';
 import { S } from './js/player-state.js';
+import {
+    isOfflinePracticeActive,
+    offlinePracticePlaybackRate,
+    pauseOfflinePractice,
+    playOfflinePractice,
+    stopOfflinePracticePlayback,
+} from './js/offline-practice-player.js';
 // Side-effect import: the three JUCE shims are IIFEs that install themselves and
 // publish through window.*. _resetJuceAudioShimChain is the one binding app.js needs.
 import { _resetJuceAudioShimChain } from './js/juce-audio.js';
@@ -257,6 +264,7 @@ import {
     artAbortController,
     closeCurrentSong,
     currentFilename,
+    playOfflinePracticePackage,
     playSong,
     showScreen,
 } from './js/session.js';
@@ -814,11 +822,17 @@ function _currentPlaybackSnapshot() {
         mediaTime: Number.isFinite(time) ? time : null,
         chartTime: (typeof window.highway?.getTime === 'function') ? window.highway.getTime() : null,
         duration: Number.isFinite(_audioDuration()) ? _audioDuration() : (song && song.duration) || null,
-        playbackRate: window._juceMode ? (window.jucePlayer && window.jucePlayer._speed || 1) : audio.playbackRate,
+        playbackRate: isOfflinePracticeActive()
+            ? offlinePracticePlaybackRate()
+            : (window._juceMode ? (window.jucePlayer && window.jucePlayer._speed || 1) : audio.playbackRate),
         isPlaying: S.isPlaying,
         readiness: song ? 'ready' : 'idle',
-        routeKind: window._juceMode ? 'desktop-native' : 'browser-media',
-        routeState: song || audio.src || window._juceAudioUrl ? 'active' : 'unavailable',
+        routeKind: isOfflinePracticeActive()
+            ? 'offline-web-audio'
+            : (window._juceMode ? 'desktop-native' : 'browser-media'),
+        routeState: song || audio.src || window._juceAudioUrl || isOfflinePracticeActive()
+            ? 'active'
+            : 'unavailable',
         loopA,
         loopB,
         loop: loopA !== null && loopB !== null ? { startTime: loopA, endTime: loopB, enabled: true, state: 'active' } : { enabled: false, state: 'inactive' },
@@ -869,7 +883,16 @@ function _installPlaybackTransportAdapter() {
         },
         async pause() {
             const wasPlaying = S.isPlaying;
-            if (!window._juceMode && wasPlaying) {
+            if (isOfflinePracticeActive()) {
+                if (wasPlaying) {
+                    pauseOfflinePractice();
+                    _markPlaybackPaused();
+                } else {
+                    S.isPlaying = false;
+                    window.feedBack.isPlaying = false;
+                    setPlayButtonState(false);
+                }
+            } else if (!window._juceMode && wasPlaying) {
                 S.isPlaying = false;
                 window.feedBack.isPlaying = false;
                 audio.pause();
@@ -883,7 +906,11 @@ function _installPlaybackTransportAdapter() {
             return _currentPlaybackSnapshot();
         },
         async resume() {
-            if (window._juceMode) {
+            if (isOfflinePracticeActive()) {
+                const started = await playOfflinePractice();
+                if (!started) return { unavailable: true, reason: 'offline practice transport unavailable' };
+                _markPlaybackResumed();
+            } else if (window._juceMode) {
                 const started = await jucePlayer.play();
                 if (!started) return { unavailable: true, reason: 'desktop backing transport unavailable' };
                 _markPlaybackResumed();
@@ -897,22 +924,30 @@ function _installPlaybackTransportAdapter() {
         },
         async stop() {
             const stopTime = _audioTime();
-            const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying;
+            const offlineActive = isOfflinePracticeActive();
+            const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying
+                || offlineActive;
             const wasPlaying = S.isPlaying;
-            if (window._juceMode) await jucePlayer.stop().catch(() => {});
-            if (!window._juceMode && wasPlaying) {
-                S.isPlaying = false;
-                window.feedBack.isPlaying = false;
-                audio.pause();
-                _markPlaybackPaused();
-            } else {
-                // HTML5 only. In JUCE mode jucePlayer.stop() already stopped the
-                // engine; the audio.pause() shim would just queue a redundant
-                // jucePlayer.pause() and a duplicate (or, when not playing,
-                // spurious) song:pause.
-                if (!window._juceMode) audio.pause();
+            if (offlineActive) {
+                stopOfflinePracticePlayback();
                 if (wasPlaying) _markPlaybackPaused();
                 else { S.isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
+            } else {
+                if (window._juceMode) await jucePlayer.stop().catch(() => {});
+                if (!window._juceMode && wasPlaying) {
+                    S.isPlaying = false;
+                    window.feedBack.isPlaying = false;
+                    audio.pause();
+                    _markPlaybackPaused();
+                } else {
+                    // HTML5 only. In JUCE mode jucePlayer.stop() already stopped the
+                    // engine; the audio.pause() shim would just queue a redundant
+                    // jucePlayer.pause() and a duplicate (or, when not playing,
+                    // spurious) song:pause.
+                    if (!window._juceMode) audio.pause();
+                    if (wasPlaying) _markPlaybackPaused();
+                    else { S.isPlaying = false; window.feedBack.isPlaying = false; setPlayButtonState(false); }
+                }
             }
             if (hadPlayableSong) _emitPlaybackStopped(stopTime);
             return _currentPlaybackSnapshot();
@@ -1154,6 +1189,20 @@ let _arrBusyTimeout = null;
 
 async function changeArrangement(index, drumPart) {
     if (currentFilename) {
+        if (isOfflinePracticeActive()) {
+            const songInfo = window.highway && typeof window.highway.getSongInfo === 'function'
+                ? window.highway.getSongInfo()
+                : null;
+            const arrSel = document.getElementById('arr-select');
+            if (arrSel && songInfo && Number.isFinite(Number(songInfo.arrangement_index))) {
+                arrSel.value = String(songInfo.arrangement_index);
+            }
+            const dpSel = document.getElementById('drum-part-select');
+            if (dpSel && songInfo?.offline) {
+                dpSel.value = '';
+            }
+            return;
+        }
         // Tear down any pending fresh-load credits before switching: the
         // no-count-in hold timer would otherwise fire togglePlay() against the
         // incoming (still-loading) arrangement. hideSongCreditsOverlay() clears
@@ -2359,7 +2408,8 @@ Object.assign(window, {
     filterLibrary, fullRescanLibrary, goFavPage, handleSliderInput,
     hideScanBanner, importSettings, loadPlugins, loadSavedLoop,
     loadSettings, onSectionPracticeModeChange, openEditModal, persistSetting,
-    pickDlcFolder, pinCurrentArrangementDefault, playSong, previewDiagnostics,
+    pickDlcFolder, pinCurrentArrangementDefault, playOfflinePracticePackage,
+    playSong, previewDiagnostics,
     previewEditArt, renderGridCards, renderTreeInto, rescanLibrary,
     retuneSong, saveCurrentLoop, saveSettings, seekBy,
     setAvOffsetMs, setFavView, setInstrumentPathway, setLibView,

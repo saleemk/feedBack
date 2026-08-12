@@ -19,6 +19,9 @@ async function loadModule() {
     ).replace(
         /import \{ downloadPracticePackage \} from '\.\.\/js\/practice-package-client\.js';/,
         'const downloadPracticePackage = async () => {};',
+    ).replace(
+        /import \{ playOfflinePracticePackage \} from '\.\.\/js\/session\.js';/,
+        'const playOfflinePracticePackage = async () => {};',
     );
     importSerial += 1;
     return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64') + '#' + importSerial);
@@ -204,6 +207,9 @@ test('offline panel shows complete metadata, storage estimate, and explicit dele
     assert.match(source, /Offline \(\$\{packages\.length\}\)/);
     assert.match(source, /metadata\.arrangement\.name/);
     assert.match(source, /navigatorRef\?\.storage/);
+    assert.match(source, /data-offline-play/);
+    assert.match(source, /await launch\(revision\)/);
+    assert.match(source, /Offline launch failed/);
     assert.match(source, /data-offline-delete/);
     assert.match(source, /Delete offline bundle\?/);
     assert.match(source, /await store\.deletePackage\(revision\)/);

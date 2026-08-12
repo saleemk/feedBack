@@ -78,6 +78,14 @@ import {
     togglePlay,
 } from './transport.js';
 import {
+    isOfflinePracticeActive,
+    loadOfflinePracticePackage,
+    stopOfflinePracticePlayback,
+} from './offline-practice-player.js';
+import {
+    readCompletePracticePackage,
+} from './practice-package-store.js';
+import {
     _activeLibraryProviderId,
     _bumpLibNavGeneration,
     _getArrangementNamingMode,
@@ -199,13 +207,16 @@ export async function showScreen(id) {
     if (id !== 'player') {
         const audio = document.getElementById('audio');
         const stopTime = _audioTime();
-        const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying;
+        const offlineActive = isOfflinePracticeActive();
+        const hadPlayableSong = !!audio.src || !!window._juceAudioUrl || S.isPlaying
+            || offlineActive;
         // Snapshot where we were so leaving the player — especially by accident
         // — is recoverable instead of dumping the user back at bar 1 next time.
         // Must run BEFORE window.highway.stop()/audio unload, while getSongInfo() and
         // the position (stopTime) are still live.
-        if (hadPlayableSong) _snapshotResumeSession(stopTime);
+        if (hadPlayableSong && !offlineActive) _snapshotResumeSession(stopTime);
         window.highway.stop();
+        stopOfflinePracticePlayback();
         // Cancel any queued seeks, in-flight shim closures, AND active
         // count-in timers before stopping playback so none of these paths
         // can mutate the torn-down session (mirrors the same triple reset
@@ -664,6 +675,7 @@ export async function playSong(filename, arrangement, options) {
     artAbortController = null;
 
     window.highway.stop();
+    stopOfflinePracticePlayback();
     // Cancel any active count-in: clear timers/RAF and bump the gen so
     // delayed callbacks (rewind frames, post-seek then, count-in ticks,
     // post-count play) bail before mutating the new session.
@@ -744,6 +756,95 @@ export async function playSong(filename, arrangement, options) {
     document.getElementById('quality-select').value = window.highway.getRenderScale();
     const _minScaleSel = document.getElementById('min-scale-select');
     if (_minScaleSel && window.highway.getMinRenderScale) _minScaleSel.value = String(window.highway.getMinRenderScale());
+}
+
+export async function playOfflinePracticePackage(revision, options = {}) {
+    const readPackage = typeof options.readPackage === 'function'
+        ? options.readPackage
+        : readCompletePracticePackage;
+    const packageRecord = await readPackage(revision);
+    if (!packageRecord) throw new Error('Offline practice bundle was not found');
+    if (typeof window.highway?.loadOfflinePractice !== 'function') {
+        throw new Error('Offline practice playback is unavailable');
+    }
+
+    const metadata = packageRecord.metadata;
+    const filename = metadata.source?.filename || metadata.revision;
+
+    if (artAbortController) artAbortController.abort();
+    artAbortController = null;
+
+    window.highway.stop();
+    stopOfflinePracticePlayback();
+    _cancelCountIn();
+    _resetJuceAudioShimChain();
+    _resetAudioSeekState();
+    if (window._juceMode) {
+        const payload = _songEventPayload();
+        const wasPlaying = S.isPlaying;
+        await jucePlayer.stop().catch(() => {});
+        if (wasPlaying && window.feedBack) {
+            window.feedBack.isPlaying = false;
+            window.feedBack.emit('song:pause', payload);
+        }
+        window._juceMode = false;
+        window._juceAudioUrl = null;
+    }
+    audio.pause();
+    audio.src = '';
+    window._currentSongAudio = null;
+    window._clearJuceRerouteMemo?.();
+    S.isPlaying = false;
+    setPlayButtonState(false);
+    _resetPlaybackSpeedForNewSong();
+    clearLoop();
+    _resetSectionPracticeLog();
+    _hideSectionPracticeBar();
+    S.lastAudioTime = 0;
+
+    const offline = await loadOfflinePracticePackage(packageRecord, options);
+
+    try {
+        _clearAutoplayHold();
+        window.feedBack.emit('song:loading', {
+            filename,
+            arrangement: metadata.arrangement?.index ?? null,
+            offline: true,
+            revision: metadata.revision,
+        });
+
+        currentFilename = filename;
+        S.pendingResume = null;
+        _pendingAutostart = true;
+        _clearAutoExit();
+        _playerOriginScreen = _resolvePlayerOrigin();
+        showScreen('player');
+
+        window.highway.init(document.getElementById('highway'));
+        await window.highway.loadOfflinePractice(offline.messages, {
+            metadata,
+            duration: offline.duration,
+        });
+        _resetSectionPracticeLog();
+        _scheduleSectionPracticeRetries();
+        loadSavedLoops();
+        document.getElementById('quality-select').value = window.highway.getRenderScale();
+        const _minScaleSel = document.getElementById('min-scale-select');
+        if (_minScaleSel && window.highway.getMinRenderScale) _minScaleSel.value = String(window.highway.getMinRenderScale());
+    } catch (error) {
+        stopOfflinePracticePlayback();
+        _pendingAutostart = false;
+        S.pendingResume = null;
+        S.isPlaying = false;
+        setPlayButtonState(false);
+        if (window.feedBack) window.feedBack.isPlaying = false;
+        currentFilename = '';
+        _clearAutoExit();
+        try { window.highway.stop(); } catch (_) {}
+        const active = document.querySelector('.screen.active');
+        if (active && active.id === 'player') await showScreen(_playerOriginScreen || 'home');
+        throw error;
+    }
 }
 
 // Leave the player and return to the screen the song was launched from

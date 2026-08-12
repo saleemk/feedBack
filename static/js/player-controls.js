@@ -13,6 +13,10 @@
 // fails CI if the hooks used here and the hooks app.js wires ever drift apart.
 import { audio } from './audio-el.js';
 import { host } from './host.js';
+import {
+    isOfflinePracticeActive,
+    setOfflinePracticePlaybackRate,
+} from './offline-practice-player.js';
 
 // ── Autoplay & auto-exit (global option, default ON) ──────────────────
 // One toggle (`autoplayExit` in localStorage) that (a) auto-starts a song
@@ -113,7 +117,9 @@ export function setSpeed(v) {
     if (!Number.isFinite(rate)) {
         return;
     }
-    if (window._juceMode) {
+    if (isOfflinePracticeActive()) {
+        setOfflinePracticePlaybackRate(rate);
+    } else if (window._juceMode) {
         window.jucePlayer?.setRate(rate);
         const juceAudio = window.feedBackDesktop?.audio;
         Promise.resolve()
@@ -142,6 +148,7 @@ export function _resetPlaybackSpeedForNewSong() {
     const speedSlider = document.getElementById('speed-slider');
     if (speedSlider) speedSlider.value = 100;
     audio.playbackRate = 1;
+    setOfflinePracticePlaybackRate(1);
     window.jucePlayer?.setRate?.(1);
     const juceAudio = window.feedBackDesktop?.audio;
     Promise.resolve()

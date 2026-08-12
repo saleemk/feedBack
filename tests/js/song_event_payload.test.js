@@ -55,6 +55,9 @@ function buildSandbox({ juceMode = false, audioT = 12.5, chartT = 11.8, juceT } 
 
 function loadFunctions(sandbox, src) {
     const code = `
+        function isOfflinePracticeActive() { return false; }
+        function offlinePracticeCurrentTime() { return 0; }
+        function offlinePracticeDuration() { return NaN; }
         ${extractFunction(src, 'function _audioTime()')}
         ${extractFunction(src, 'function _audioDuration()')}
         ${extractFunction(src, 'function _songEventPayload()')}

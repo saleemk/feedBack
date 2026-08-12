@@ -30,6 +30,15 @@
 // a getter and left the writer in app.js.
 import { audio } from './audio-el.js';
 import { S } from './player-state.js';
+import {
+    isOfflinePracticeActive,
+    offlinePracticeCurrentTime,
+    offlinePracticeDuration,
+    pauseOfflinePractice,
+    playOfflinePractice,
+    seekOfflinePractice,
+    setOfflinePracticeEndedHandler,
+} from './offline-practice-player.js';
 
 // Sync the play/pause button's icon and accessible state in one place so
 // screen readers, tooltips, and aria-pressed stay aligned with playback.
@@ -158,9 +167,15 @@ export const jucePlayer = {
     },
 };
 
-export function _audioTime() { return window._juceMode ? jucePlayer.currentTime : audio.currentTime; }
+export function _audioTime() {
+    if (isOfflinePracticeActive()) return offlinePracticeCurrentTime();
+    return window._juceMode ? jucePlayer.currentTime : audio.currentTime;
+}
 
-export function _audioDuration() { return window._juceMode ? jucePlayer.duration : audio.duration; }
+export function _audioDuration() {
+    if (isOfflinePracticeActive()) return offlinePracticeDuration();
+    return window._juceMode ? jucePlayer.duration : audio.duration;
+}
 
 // Canonical payload for song:play/song:pause/song:ended. Plugins anchor
 // their own clocks against `perfNow` (a monotonic timestamp at the same
@@ -176,6 +191,19 @@ export function _songEventPayload() {
         perfNow: performance.now(),
     };
 }
+
+setOfflinePracticeEndedHandler(() => {
+    const duration = offlinePracticeDuration();
+    if (window.highway && typeof window.highway.setTime === 'function') {
+        window.highway.setTime(Number.isFinite(duration) ? duration : _audioTime());
+    }
+    S.isPlaying = false;
+    setPlayButtonState(false);
+    if (window.feedBack) {
+        window.feedBack.isPlaying = false;
+        window.feedBack.emit('song:ended', _songEventPayload());
+    }
+});
 
 export function _markPlaybackPaused() {
     S.isPlaying = false;
@@ -274,7 +302,8 @@ export async function _audioSeek(s, reason) {
     _audioSeekChain = _audioSeekChain.then(async () => {
         if (gen !== _audioSeekGen) return { completed: false, from: NaN, to: NaN };
         const from = _audioTime();
-        if (window._juceMode) await _juceSeekWithTimeout(s);
+        if (isOfflinePracticeActive()) await seekOfflinePractice(s);
+        else if (window._juceMode) await _juceSeekWithTimeout(s);
         else audio.currentTime = s;
         if (gen !== _audioSeekGen) return { completed: false, from, to: NaN };
         // Read the verified post-seek position rather than the requested `s`
@@ -308,6 +337,16 @@ export async function _audioSeek(s, reason) {
 let _playAttemptGen = 0;
 
 export async function togglePlay() {
+    if (isOfflinePracticeActive()) {
+        if (S.isPlaying) {
+            pauseOfflinePractice();
+            _markPlaybackPaused();
+        } else {
+            const started = await playOfflinePractice();
+            if (started) _markPlaybackResumed();
+        }
+        return;
+    }
     if (window._juceMode) {
         if (S.isPlaying) {
             await jucePlayer.pause();

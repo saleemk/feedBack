@@ -90,7 +90,7 @@ test('restage is a pre-ready no-op: provider stays attached, ready path runs the
     assert.ok(invokeAt > guardAt, 'guard sits before the provider is invoked');
     // The ready handler must flip hwState.ready BEFORE rebuilding the
     // filter, or the guard would skip the first real staging.
-    const readyCase = src.indexOf("case 'ready':");
+    const readyCase = src.indexOf("case 'ready':", src.indexOf('connect(wsUrl'));
     const readyFlip = src.indexOf('hwState.ready = true;', readyCase);
     const readyRebuild = src.indexOf('_rebuildMasteryFilter();', readyCase);
     assert.ok(readyCase > -1 && readyFlip > -1 && readyRebuild > readyFlip,

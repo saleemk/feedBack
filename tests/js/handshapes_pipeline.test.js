@@ -14,8 +14,8 @@ const path = require('node:path');
 
 const HIGHWAY_JS = path.join(__dirname, '..', '..', 'static', 'highway.js');
 
-function getCaseBlock(src, label) {
-    const start = src.indexOf(`case '${label}'`);
+function getCaseBlock(src, label, fromIndex = 0) {
+    const start = src.indexOf(`case '${label}'`, fromIndex);
     assert.ok(start !== -1, `case '${label}' not found in highway.js`);
     const tail = src.slice(start);
     const nextCase = tail.search(/\n\s*case\s+['"]/);
@@ -43,7 +43,7 @@ test('ready case time-sorts handShapes before rendering', () => {
     // breaking the binary-search lookups the 3D renderer does when
     // probing arpeggio coverage for a chord at time t.
     const src = fs.readFileSync(HIGHWAY_JS, 'utf8');
-    const block = getCaseBlock(src, 'ready');
+    const block = getCaseBlock(src, 'ready', src.indexOf('connect(wsUrl'));
     assert.match(
         block,
         /handShapes\.sort\(\s*\(\s*a\s*,\s*b\s*\)\s*=>\s*a\.start_time\s*-\s*b\.start_time\s*\)/,

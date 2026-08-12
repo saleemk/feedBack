@@ -1562,6 +1562,116 @@ function createHighway() {
         hwState._xfCentOffset = null;
     }
 
+    function _offlineStringCount(msg) {
+        const MAX_STRINGS = 8;
+        let count;
+        if (typeof msg.stringCount === 'number' && msg.stringCount > 0) count = msg.stringCount;
+        else if (Array.isArray(msg.tuning) && msg.tuning.length > 0) count = msg.tuning.length;
+        else count = 6;
+        const truncated = Number.isFinite(count) ? Math.trunc(count) : 1;
+        return Math.max(1, Math.min(MAX_STRINGS, truncated));
+    }
+
+    function _offlineArrangementLabel(songInfo) {
+        const mode = songInfo.naming_mode === 'legacy' ? 'legacy' : 'smart';
+        return mode === 'smart' && songInfo.arrangement_smart_name
+            ? songInfo.arrangement_smart_name
+            : songInfo.arrangement;
+    }
+
+    function _applyOfflineSongInfo(msg, metadata, duration) {
+        const songInfo = Object.assign({}, msg, {
+            audio_url: null,
+            duration: Number.isFinite(duration) ? duration : msg.duration,
+            hasNotation: Boolean(msg.has_notation),
+            hasDrumTab: Boolean(msg.has_drum_tab),
+            offline: true,
+        });
+        hwState.songInfo = songInfo;
+        hwState.songOffset = Number.isFinite(Number(songInfo.offset)) ? Number(songInfo.offset) : 0.0;
+        hwState.stringCount = _offlineStringCount(songInfo);
+
+        const artistEl = document.getElementById('hud-artist');
+        const titleEl = document.getElementById('hud-title');
+        const arrangementEl = document.getElementById('hud-arrangement');
+        const tuningEl = document.getElementById('hud-tuning');
+        const targetsEl = document.getElementById('hud-tuning-targets');
+        if (artistEl) artistEl.textContent = songInfo.artist || metadata.song?.artist || '';
+        if (titleEl) titleEl.textContent = songInfo.title || metadata.song?.title || '';
+        if (arrangementEl) arrangementEl.textContent = _offlineArrangementLabel(songInfo);
+        const tuningLabel = (typeof window.displayTuningName === 'function')
+            ? window.displayTuningName(null, songInfo.tuning)
+            : '';
+        if (tuningEl) tuningEl.textContent = tuningLabel ? ('Tuning: ' + tuningLabel) : '';
+        if (targetsEl) targetsEl.textContent = '';
+        document.getElementById('audio-error-banner')?.remove();
+
+        const sel = document.getElementById('arr-select');
+        if (sel) {
+            const arrangement = {
+                index: metadata.arrangement?.index ?? songInfo.arrangement_index ?? 0,
+                name: metadata.arrangement?.name || songInfo.arrangement || 'Default',
+                smart_name: metadata.arrangement?.smartName || songInfo.arrangement_smart_name || '',
+                notes: Array.isArray(hwState.notes) ? hwState.notes.length : 0,
+            };
+            sel.textContent = '';
+            const opt = document.createElement('option');
+            opt.value = arrangement.index;
+            opt.selected = true;
+            const displayName = songInfo.naming_mode === 'smart' && arrangement.smart_name
+                ? arrangement.smart_name
+                : arrangement.name;
+            opt.textContent = `${displayName} (${arrangement.notes ?? 0})`;
+            sel.appendChild(opt);
+            sel.value = String(arrangement.index);
+            sel.disabled = true;
+        }
+        const dpSel = document.getElementById('drum-part-select');
+        if (dpSel) {
+            dpSel.textContent = '';
+            dpSel.value = '';
+            dpSel.disabled = true;
+        }
+        const dpRow = document.getElementById('v3-drum-part-row');
+        if (dpRow) dpRow.classList.toggle('hidden', true);
+
+        if (window.feedBack) {
+            window.feedBack.currentSong = {
+                filename: metadata.source?.filename || metadata.revision,
+                offlineRevision: metadata.revision,
+                title: songInfo.title,
+                artist: songInfo.artist,
+                duration: songInfo.duration,
+                arrangement: songInfo.arrangement,
+                arrangementSmartName: songInfo.arrangement_smart_name ?? null,
+                arrangementIndex: songInfo.arrangement_index,
+                arrangements: songInfo.arrangements || [],
+                tuning: songInfo.tuning,
+                capo: songInfo.capo,
+                format: 'offline-practice',
+                hasDrumTab: Boolean(songInfo.has_drum_tab),
+                hasNotation: Boolean(songInfo.has_notation),
+                authors: [],
+            };
+            window.feedBack.emit('song:loaded', window.feedBack.currentSong);
+        }
+    }
+
+    async function _finishOfflineReady() {
+        hwState.ready = true;
+        if (hwState.handShapes.length) {
+            hwState.handShapes.sort((a, b) => a.start_time - b.start_time);
+        }
+        _rebuildMasteryFilter();
+        if (!hwState.animFrame) draw();
+        if (api._onReady) await Promise.resolve(api._onReady()).catch((err) => console.error('[highway] _onReady error:', err));
+        if (window.feedBack) {
+            window.feedBack.emit('song:ready', {
+                hasPhraseData: api.hasPhraseData(),
+            });
+        }
+    }
+
     function _cloneChartTransformValue(value, seen = new WeakMap()) {
         if (!value || typeof value !== 'object') return value;
         if (seen.has(value)) return seen.get(value);
@@ -1702,6 +1812,88 @@ function createHighway() {
             // Keep _xfProvider (persists across songs); drop staged output.
             _clearChartTransformStage();
             _resetChordRenderState();
+        },
+
+        async loadOfflinePractice(messages, { metadata, duration } = {}) {
+            if (!Array.isArray(messages) || !messages.length) {
+                throw new Error('Stored chart is empty');
+            }
+            hwState._wsGen += 1;
+            if (hwState.ws) { hwState.ws.close(); hwState.ws = null; }
+            hwState._juceRoutingPromise = Promise.resolve();
+            window._highwayJuceRoutingPending = false;
+            let sawSongInfo = false;
+            let sawReady = false;
+            for (const msg of messages) {
+                if (!msg || typeof msg.type !== 'string') {
+                    throw new Error('Stored chart contains an invalid highway message');
+                }
+                switch (msg.type) {
+                    case 'loading':
+                        break;
+                    case 'song_info':
+                        sawSongInfo = true;
+                        _applyOfflineSongInfo(msg, metadata || {}, duration);
+                        break;
+                    case 'beats':
+                        hwState.beats = Array.isArray(msg.data) ? msg.data : [];
+                        if (window.feedBack && typeof window.feedBack.emit === 'function') {
+                            window.feedBack.emit('beats:loaded', { count: hwState.beats.length });
+                        }
+                        break;
+                    case 'sections': hwState.sections = Array.isArray(msg.data) ? msg.data : []; break;
+                    case 'anchors':
+                        hwState.anchors = Array.isArray(msg.data) ? msg.data : [];
+                        if (hwState.anchors.length) {
+                            hwState.displayMaxFret = Math.max(hwState.anchors[0].fret + hwState.anchors[0].width + 3, 8);
+                        }
+                        break;
+                    case 'chord_templates': hwState.chordTemplates = Array.isArray(msg.data) ? msg.data : []; break;
+                    case 'lyrics':
+                        hwState.lyrics = Array.isArray(msg.data) ? msg.data : [];
+                        hwState.lyricsSource = msg.source || "";
+                        break;
+                    case 'tone_changes':
+                        hwState.toneChanges = Array.isArray(msg.data) ? msg.data : [];
+                        hwState.toneBase = msg.base || "";
+                        break;
+                    case 'notes':
+                        if (Array.isArray(msg.data)) hwState.notes = hwState.notes.concat(msg.data);
+                        break;
+                    case 'chords':
+                        if (Array.isArray(msg.data)) hwState.chords = hwState.chords.concat(msg.data);
+                        break;
+                    case 'handshapes':
+                        if (Array.isArray(msg.data)) hwState.handShapes = hwState.handShapes.concat(msg.data);
+                        break;
+                    case 'drum_tab':
+                        hwState.drumTab = {
+                            version: Number.isInteger(msg.version) ? msg.version : 1,
+                            name: (typeof msg.name === 'string' && msg.name) ? msg.name : 'Drums',
+                            kit: Array.isArray(msg.kit) ? msg.kit : [],
+                            hits: [],
+                            part_id: (typeof msg.part_id === 'string' && msg.part_id) ? msg.part_id : null,
+                        };
+                        break;
+                    case 'drum_hits':
+                        if (hwState.drumTab && Array.isArray(msg.data)) {
+                            Array.prototype.push.apply(hwState.drumTab.hits, msg.data);
+                        }
+                        break;
+                    case 'phrases':
+                        if (hwState._phrases === null) hwState._phrases = [];
+                        if (Array.isArray(msg.data)) {
+                            for (const phrase of msg.data) hwState._phrases.push(phrase);
+                        }
+                        break;
+                    case 'ready':
+                        sawReady = true;
+                        break;
+                }
+            }
+            if (!sawSongInfo) throw new Error('Stored chart is missing song metadata');
+            if (!sawReady) throw new Error('Stored chart is incomplete');
+            await _finishOfflineReady();
         },
 
         resize() {
@@ -2280,6 +2472,7 @@ function createHighway() {
                                 // Populate arrangement dropdown
                                 if (msg.arrangements) {
                                     const sel = document.getElementById('arr-select');
+                                    if (sel) sel.disabled = false;
                                     // Server-echoed naming_mode preferred; see HUD branch above.
                                     let namingMode = msg.naming_mode;
                                     if (namingMode !== 'smart' && namingMode !== 'legacy') {
@@ -2311,6 +2504,7 @@ function createHighway() {
                                 {
                                     const dpSel = document.getElementById('drum-part-select');
                                     if (dpSel) {
+                                        dpSel.disabled = false;
                                         const parts = Array.isArray(msg.drum_parts) ? msg.drum_parts : [];
                                         dpSel.textContent = '';
                                         for (const p of parts) {

@@ -173,6 +173,7 @@ function loadPlaySong(sandbox) {
         function _cancelCountIn() {}
         function _resetJuceAudioShimChain() {}
         function _resetAudioSeekState() {}
+        function stopOfflinePracticePlayback() {}
         function setPlayButtonState() {}
         function clearLoop() {}
         function _resetSectionPracticeLog() {}
@@ -182,6 +183,8 @@ function loadPlaySong(sandbox) {
         function _scheduleSectionPracticeRetries() {}
         function loadSavedLoops() {}
         function _songEventPayload() { return { time: 7, audioT: 7, chartT: 7, perfNow: 7 }; }
+        function isOfflinePracticeActive() { return false; }
+        function setOfflinePracticePlaybackRate() {}
         ${extractFunction(controls, 'function setSpeed')}
         ${speedPresetHelpers}
         ${resetHelper}

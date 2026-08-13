@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const reg = require('../../static/capabilities/library-card-actions.js');
 
 function freshIds() { reg.snapshot().actions.forEach((a) => reg.unregister(a.id)); }
@@ -11,6 +13,24 @@ test('register + list returns applicable actions sorted by order', () => {
     reg.register({ id: 'a', label: 'A', order: 10, run() {} });
     const ids = reg.list({ filename: 'x.archive' }).map((a) => a.id);
     assert.deepStrictEqual(ids, ['a', 'b']);
+});
+
+test('plugin id remains in registry summaries but not normal card menu markup', () => {
+    freshIds();
+    reg.register({
+        id: 'provider-action',
+        pluginId: 'core.offline-practice',
+        label: 'Provider action',
+        run() {},
+    });
+    assert.strictEqual(reg.list({ filename: 'x.archive' })[0].pluginId, 'core.offline-practice');
+    assert.strictEqual(reg.snapshot().actions[0].pluginId, 'core.offline-practice');
+
+    const songsSource = fs.readFileSync(
+        path.join(__dirname, '..', '..', 'static', 'v3', 'songs.js'),
+        'utf8',
+    );
+    assert.doesNotMatch(songsSource, /esc\(r\.plugin\)/);
 });
 
 test('applies() filters out non-applicable actions', () => {

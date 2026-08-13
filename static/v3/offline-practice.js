@@ -9,7 +9,9 @@ import { playOfflinePracticePackage } from '../js/session.js';
 
 const TOOLBAR_ID = 'v3-songs-offline';
 const PANEL_ID = 'v3-offline-panel';
-const ACTION_ID = 'offline-download';
+const DOWNLOAD_ACTION_ID = 'offline-download';
+const OPEN_ACTION_ID = 'offline-open';
+const DELETE_ACTION_ID = 'offline-delete';
 const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -99,6 +101,20 @@ export function createOfflinePracticeController({
     function cardHasOfflinePackage(card) {
         const filename = card?.getAttribute?.('data-fn');
         return !!filename && (offlineFilenames.has(filename) || offlineFilenames.has(decodeFilename(filename)));
+    }
+
+    function packageForSong(song) {
+        const filename = song?.filename;
+        if (!filename) return null;
+        const decoded = decodeFilename(filename);
+        return packages.find((metadata) => {
+            const stored = metadata?.source?.filename;
+            return stored && (stored === filename || stored === decoded || decodeFilename(stored) === decoded);
+        }) || null;
+    }
+
+    function canUseOfflineActions(song) {
+        return storageReady && song?.provider === 'local' && !!song?.filename;
     }
 
     function decorateVisibleCards() {
@@ -215,6 +231,42 @@ export function createOfflinePracticeController({
         });
     }
 
+    async function openOfflineSong(song) {
+        const metadata = packageForSong(song);
+        if (!metadata || busy) return;
+        busy = true;
+        try {
+            await launch(metadata.revision);
+            notify(windowRef, 'Offline practice ready', packageLabel(metadata));
+            const current = documentRef?.getElementById(PANEL_ID);
+            if (current) closePanel(current);
+        } catch (error) {
+            notify(windowRef, 'Offline launch failed', error.message || String(error), '!', '#EF4444');
+            try { await refresh(); } catch (_) {}
+        } finally { busy = false; }
+    }
+
+    async function deleteOfflineSong(song) {
+        const metadata = packageForSong(song);
+        if (!metadata || busy) return;
+        const ok = await confirm({
+            title: 'Delete offline bundle?',
+            html: 'Delete the stored full mix and default chart for <strong>' +
+                esc(packageLabel(metadata)) + '</strong>?',
+            confirmText: 'Delete bundle',
+            danger: true,
+        });
+        if (!ok) return;
+        busy = true;
+        try {
+            await store.deletePackage(metadata.revision);
+            await refresh();
+            notify(windowRef, 'Offline bundle deleted', packageLabel(metadata), '×');
+        } catch (error) {
+            notify(windowRef, 'Offline delete failed', error.message || String(error), '!', '#EF4444');
+        } finally { busy = false; }
+    }
+
     async function refresh() {
         packages = await store.listPackages();
         rebuildOfflineFilenames();
@@ -269,17 +321,43 @@ export function createOfflinePracticeController({
     function registerAction() {
         const registry = windowRef.feedBack?.libraryCardActions;
         if (!registry || actionUnregister) return;
-        actionUnregister = registry.register({
-            id: ACTION_ID,
-            pluginId: 'core.offline-practice',
-            label: 'Download for offline practice',
-            icon: '↓',
-            placement: 'menu',
-            order: 35,
-            applies: (song) => storageReady && song?.provider === 'local' && !!song?.filename,
-            enabled: () => !busy,
-            run: downloadSong,
-        });
+        const unregisters = [
+            registry.register({
+                id: DOWNLOAD_ACTION_ID,
+                pluginId: 'core.offline-practice',
+                label: 'Download for offline practice',
+                icon: '↓',
+                placement: 'menu',
+                order: 35,
+                applies: (song) => canUseOfflineActions(song) && !packageForSong(song),
+                enabled: () => !busy,
+                run: downloadSong,
+            }),
+            registry.register({
+                id: OPEN_ACTION_ID,
+                pluginId: 'core.offline-practice',
+                label: 'Open offline',
+                icon: '▶',
+                placement: 'menu',
+                order: 35,
+                applies: (song) => canUseOfflineActions(song) && !!packageForSong(song),
+                enabled: () => !busy,
+                run: openOfflineSong,
+            }),
+            registry.register({
+                id: DELETE_ACTION_ID,
+                pluginId: 'core.offline-practice',
+                label: 'Remove download',
+                icon: '×',
+                placement: 'menu',
+                order: 36,
+                destructive: true,
+                applies: (song) => canUseOfflineActions(song) && !!packageForSong(song),
+                enabled: () => !busy,
+                run: deleteOfflineSong,
+            }),
+        ];
+        actionUnregister = () => unregisters.forEach((unregister) => unregister?.());
     }
 
     function ensureToolbar() {

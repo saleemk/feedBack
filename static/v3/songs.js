@@ -984,7 +984,7 @@
             // page reads the local DB) and gated on the Settings toggle.
             ...(state.provider === 'local' && song.artist && state.artistPagesEnabled !== false
                 ? [{ id: '__artist', label: 'Go to artist' }] : []),
-            ...items.map((a) => ({ id: a.id, label: a.label, destructive: a.destructive, enabled: a.enabled, plugin: a.pluginId })),
+            ...items.map((a) => ({ id: a.id, label: a.label, destructive: a.destructive, enabled: a.enabled })),
             // Metadata + file actions (R2) — local library only (they all
             // address the local DB / filesystem). Both openers (⋮ and
             // right-click) share this list, so parity is structural.
@@ -999,8 +999,7 @@
         menu.innerHTML = rows.map((r) =>
             '<button data-act="' + esc(r.id) + '" class="w-full text-left px-3 py-1.5 hover:bg-fb-card/60 ' +
             (r.enabled === false ? 'opacity-40 cursor-not-allowed ' : '') +
-            (r.destructive ? 'text-fb-accent' : 'text-fb-text') + '">' + esc(r.label) +
-            (r.plugin && r.plugin !== 'core' ? '<span class="text-[0.625rem] text-fb-textDim ml-1">' + esc(r.plugin) + '</span>' : '') + '</button>').join('');
+            (r.destructive ? 'text-fb-accent' : 'text-fb-text') + '">' + esc(r.label) + '</button>').join('');
         if (pos) {
             // Right-click: position the menu at the pointer (fixed, viewport-
             // relative), clamped so it never spills off the right/bottom edge.

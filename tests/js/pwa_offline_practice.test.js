@@ -170,12 +170,14 @@ test('ready storage registers the menu action and confirms before downloading', 
 
     const result = await controller.start();
     assert.equal(result.ready, true);
-    assert.equal(registrations.length, 1);
-    assert.equal(registrations[0].label, 'Download for offline practice');
-    assert.equal(registrations[0].applies({ provider: 'local', filename: 'Song.sloppak' }), true);
-    assert.equal(registrations[0].applies({ provider: 'remote', filename: 'Song.sloppak' }), false);
+    assert.equal(registrations.length, 3);
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    assert.ok(downloadAction);
+    assert.equal(downloadAction.label, 'Download for offline practice');
+    assert.equal(downloadAction.applies({ provider: 'local', filename: 'Song.sloppak' }), true);
+    assert.equal(downloadAction.applies({ provider: 'remote', filename: 'Song.sloppak' }), false);
 
-    await registrations[0].run({
+    await downloadAction.run({
         provider: 'local',
         filename: 'Song.sloppak',
         title: 'Song',
@@ -187,6 +189,76 @@ test('ready storage registers the menu action and confirms before downloading', 
     assert.match(confirmed[0].html, /default chart/);
     assert.equal(downloaded.length, 1);
     assert.equal(downloaded[0].filename, 'Song.sloppak');
+});
+
+test('stored songs expose open/remove actions instead of download', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const registrations = [];
+    const launched = [];
+    const deleted = [];
+    const confirmed = [];
+    const toolbar = document.element('v3-songs-toolbar');
+    const card = document.element();
+    const badge = document.element();
+    badge.textContent = 'FEEDPAK';
+    badge.className = 'bg-fb-primary text-white text-[0.5625rem]';
+    badge.setAttribute('data-v3-format-badge', '');
+    card.setAttribute('data-fn', 'Song.sloppak');
+    card.appendChild(badge);
+    let storedPackages = [metadata('d'.repeat(64), 'Song.sloppak')];
+    const window = {
+        feedBack: {
+            libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } },
+            on() {},
+            off() {},
+        },
+        v3Songs: { visibleCards: () => [card] },
+        fbNotify: { show() {} },
+    };
+    const controller = module.createOfflinePracticeController({
+        document,
+        window,
+        confirm: async (options) => { confirmed.push(options); return true; },
+        launch: async (revision) => { launched.push(revision); },
+        store: {
+            open: async () => {},
+            listPackages: async () => storedPackages,
+            deletePackage: async (revision) => {
+                deleted.push(revision);
+                storedPackages = [];
+            },
+            close() {},
+        },
+    });
+
+    await controller.start();
+
+    const button = document.getElementById('v3-songs-offline');
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    const openAction = registrations.find((spec) => spec.id === 'offline-open');
+    const deleteAction = registrations.find((spec) => spec.id === 'offline-delete');
+    const song = { provider: 'local', filename: 'Song.sloppak' };
+    assert.equal(toolbar.children.includes(button), true);
+    assert.equal(button.textContent, 'Offline (1)');
+    assert.equal(downloadAction.applies(song), false);
+    assert.equal(openAction.applies(song), true);
+    assert.equal(deleteAction.applies(song), true);
+
+    await openAction.run(song);
+    assert.deepEqual(launched, ['d'.repeat(64)]);
+
+    await deleteAction.run(song);
+    assert.equal(confirmed.length, 1);
+    assert.deepEqual(deleted, ['d'.repeat(64)]);
+    assert.equal(button.textContent, 'Offline (0)');
+    assert.equal(badge.textContent, 'FEEDPAK');
+    assert.equal(downloadAction.applies(song), true);
+    assert.equal(openAction.applies(song), false);
+    assert.equal(deleteAction.applies(song), false);
 });
 
 test('offline toolbar control is bound from the Library root observer', async () => {

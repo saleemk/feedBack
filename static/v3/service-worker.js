@@ -1,13 +1,13 @@
 const CACHE_PREFIX = 'feedback-pwa-offline-';
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v7`;
 const OFFLINE_URL = '/static/v3/offline.html';
 const RECOVERY_ASSET_URLS = new Set([
   OFFLINE_URL,
   '/static/v3/offline-catalog.js',
-  '/static/js/device-catalog.js',
+  '/static/js/practice-package-store.js',
 ]);
 const SHELL_CACHE_PREFIX = 'feedback-pwa-shell-';
-const SHELL_CACHE_VERSION = 'v1';
+const SHELL_CACHE_VERSION = 'v3';
 const SHELL_CACHE_NAME = `${SHELL_CACHE_PREFIX}${SHELL_CACHE_VERSION}`;
 const SHELL_MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -99,6 +99,23 @@ function pluginAssetUrls(rows) {
     }
   }
   return urls;
+}
+
+function offlinePluginRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter((plugin) => {
+    if (!plugin || typeof plugin !== 'object'
+        || plugin.status !== 'ready' || plugin.enabled === false
+        || !Array.isArray(plugin.offline_assets) || plugin.offline_assets.length === 0) {
+      return false;
+    }
+    const declared = new Set(plugin.offline_assets);
+    if (plugin.has_script && !declared.has('screen.js')) return false;
+    if (plugin.has_screen && !declared.has('screen.html')) return false;
+    if (plugin.has_settings && !declared.has('settings.html')) return false;
+    if (plugin.has_styles && plugin.styles && !declared.has(plugin.styles)) return false;
+    return true;
+  });
 }
 
 async function populateShellCache() {
@@ -197,6 +214,47 @@ async function shellResourceResponse(request) {
   }
 }
 
+async function offlineShellResourceResponse(request) {
+  const cache = await resolveCompleteShellCache();
+  if (!cache) return Response.error();
+  const cached = await cache.match(shellCacheKey(request));
+  if (!cached) return Response.error();
+
+  const url = new URL(request.url);
+  if (url.pathname !== PLUGINS_URL) return cached;
+  try {
+    const plugins = offlinePluginRows(await cached.json());
+    return new Response(JSON.stringify(plugins), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (_) {
+    return Response.error();
+  }
+}
+
+function isExplicitOfflineAppUrl(value) {
+  try {
+    const url = new URL(value, self.location.origin);
+    return url.origin === self.location.origin
+      && APP_ENTRY_PATHS.has(url.pathname)
+      && url.searchParams.get('offline') === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+async function requestUsesOfflineApp(event) {
+  if (!event.clientId || typeof self.clients.get !== 'function') return false;
+  const client = await self.clients.get(event.clientId);
+  return Boolean(client && isExplicitOfflineAppUrl(client.url));
+}
+
+async function offlineAppNavigationResponse() {
+  const cache = await resolveCompleteShellCache();
+  const shell = cache ? await cache.match('/static/v3/index.html') : null;
+  return shell || offlineResponse();
+}
+
 async function recoveryResourceResponse(request) {
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(request);
@@ -247,11 +305,29 @@ self.addEventListener('fetch', (event) => {
     const isShellResource = url.pathname.startsWith('/static/')
       || url.pathname === PLUGINS_URL
       || url.pathname.startsWith(`${PLUGINS_URL}/`);
-    if (isShellResource) event.respondWith(shellResourceResponse(event.request));
+    if (isShellResource) {
+      event.respondWith(
+        requestUsesOfflineApp(event).then((offline) => (
+          offline
+            ? offlineShellResourceResponse(event.request)
+            : shellResourceResponse(event.request)
+        ))
+      );
+    }
+    return;
+  }
+
+  if (url.pathname === OFFLINE_URL) {
+    event.respondWith(offlineResponse());
     return;
   }
 
   if (!APP_ENTRY_PATHS.has(url.pathname)) return;
+
+  if (isExplicitOfflineAppUrl(url.href)) {
+    event.respondWith(offlineAppNavigationResponse());
+    return;
+  }
 
   const networkRequest = new Request(event.request, { cache: 'no-store' });
   event.respondWith(

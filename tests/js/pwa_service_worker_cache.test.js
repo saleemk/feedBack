@@ -11,13 +11,13 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v2';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v7';
 const RECOVERY_ASSETS = [
     '/static/v3/offline.html',
     '/static/v3/offline-catalog.js',
-    '/static/js/device-catalog.js',
+    '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v1';
+const SHELL_CACHE = 'feedback-pwa-shell-v3';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -58,6 +58,7 @@ function createHarness({ responses = {}, seedCaches = {}, fetchHook = null } = {
     const stores = new Map();
     let skipWaitingCalls = 0;
     let claimCalls = 0;
+    const clientsById = new Map();
 
     async function fakeFetch(input) {
         const request = input instanceof FakeRequest ? input : new FakeRequest(input);
@@ -123,7 +124,10 @@ function createHarness({ responses = {}, seedCaches = {}, fetchHook = null } = {
     };
     const self = {
         location: { origin: ORIGIN },
-        clients: { async claim() { claimCalls += 1; } },
+        clients: {
+            async claim() { claimCalls += 1; },
+            async get(id) { return clientsById.get(id); },
+        },
         async skipWaiting() { skipWaitingCalls += 1; },
         addEventListener(type, listener) { listeners[type] = listener; },
     };
@@ -154,10 +158,13 @@ function createHarness({ responses = {}, seedCaches = {}, fetchHook = null } = {
             listeners[type]({ waitUntil(value) { pending = value; } });
             await pending;
         },
-        async dispatchFetch(request) {
+        async dispatchFetch(request, { clientUrl = null } = {}) {
             let responsePromise;
+            const clientId = clientUrl ? 'test-client' : '';
+            if (clientUrl) clientsById.set(clientId, { url: new URL(clientUrl, ORIGIN).href });
             listeners.fetch({
                 request,
+                clientId,
                 respondWith(value) { responsePromise = value; },
             });
             return responsePromise ? responsePromise : undefined;
@@ -177,6 +184,7 @@ function successfulResponses() {
             status: 'ready',
             enabled: true,
             offline_assets: ['screen.js', 'src/main file.js'],
+            has_script: true,
         },
         {
             id: 'mobile ui',
@@ -193,9 +201,9 @@ function successfulResponses() {
         manifestBody,
         pluginsBody,
         responses: {
-            '/static/v3/offline.html': new FakeResponse('recovery'),
-            '/static/v3/offline-catalog.js': new FakeResponse('offline catalog'),
-            '/static/js/device-catalog.js': new FakeResponse('catalog storage'),
+            ...Object.fromEntries(
+                RECOVERY_ASSETS.map((asset) => [asset, new FakeResponse('recovery')]),
+            ),
             [MANIFEST_URL]: new FakeResponse(manifestBody, { headers: { ETag: 'manifest' } }),
             [PLUGINS_URL]: new FakeResponse(pluginsBody, { headers: { ETag: 'plugins' } }),
             '/static/app.js': new FakeResponse('core app'),
@@ -317,9 +325,9 @@ test('malformed manifest or eligible plugin metadata fails the shell candidate c
     ];
 
     for (const responses of cases) {
-        responses['/static/v3/offline.html'] = new FakeResponse('recovery');
-        responses['/static/v3/offline-catalog.js'] = new FakeResponse('offline catalog');
-        responses['/static/js/device-catalog.js'] = new FakeResponse('catalog storage');
+        for (const asset of RECOVERY_ASSETS) {
+            responses[asset] = new FakeResponse('recovery');
+        }
         const harness = createHarness({ responses });
         await harness.dispatchLifecycle('install');
         assert.equal(harness.hasCache(SHELL_CACHE), false);
@@ -470,6 +478,106 @@ test('plugin discovery and versioned stable assets use their exact cached snapsh
         harness.dispatchFetch(new FakeRequest('/api/plugins/mobile%20ui/g/1/screen.js?v=0.4.0')),
         /network down/,
     );
+});
+
+test('explicit offline navigation serves the cached real shell without network access', async () => {
+    const harness = createHarness({
+        seedCaches: {
+            [RECOVERY_CACHE]: { '/static/v3/offline.html': new FakeResponse('recovery') },
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/v3/index.html': new FakeResponse('cached real shell'),
+            },
+        },
+        fetchHook: async () => { throw new Error('network must not run'); },
+    });
+
+    const response = await harness.dispatchFetch(new FakeRequest(
+        `/v3/?offline=1&revision=${'a'.repeat(64)}`,
+        { mode: 'navigate' },
+    ));
+    assert.equal(await response.text(), 'cached real shell');
+    assert.equal(harness.fetches.length, 0);
+});
+
+test('explicit offline navigation falls back to recovery without a complete shell', async () => {
+    for (const shellEntries of [null, { '/static/v3/index.html': new FakeResponse('partial') }]) {
+        const seedCaches = {
+            [RECOVERY_CACHE]: { '/static/v3/offline.html': new FakeResponse('recovery') },
+        };
+        if (shellEntries) seedCaches[SHELL_CACHE] = shellEntries;
+        const harness = createHarness({ seedCaches });
+        const response = await harness.dispatchFetch(new FakeRequest(
+            '/v3/?offline=1',
+            { mode: 'navigate' },
+        ));
+        assert.equal(await response.text(), 'recovery');
+        assert.equal(harness.fetches.length, 0);
+    }
+});
+
+test('offline app clients use cached core and eligible plugin snapshots only', async () => {
+    const plugins = [
+        {
+            id: 'mobile ui', status: 'ready', enabled: true,
+            has_script: true, offline_assets: ['screen.js'],
+        },
+        {
+            id: 'partial', status: 'ready', enabled: true,
+            has_script: true, has_settings: true, offline_assets: ['screen.js'],
+        },
+        {
+            id: 'online only', status: 'ready', enabled: true,
+            has_script: true, offline_assets: [],
+        },
+    ];
+    const harness = createHarness({
+        seedCaches: {
+            [SHELL_CACHE]: {
+                [SHELL_MARKER]: new FakeResponse('complete'),
+                '/static/app.js': new FakeResponse('cached app'),
+                [PLUGINS_URL]: new FakeResponse(JSON.stringify(plugins)),
+                '/api/plugins/mobile%20ui/screen.js': new FakeResponse('cached plugin'),
+            },
+        },
+        fetchHook: async () => { throw new Error('network must not run'); },
+    });
+    const options = { clientUrl: `/v3/?offline=1` };
+
+    assert.equal(
+        await (await harness.dispatchFetch(new FakeRequest('/static/app.js'), options)).text(),
+        'cached app',
+    );
+    const discovery = await (await harness.dispatchFetch(
+        new FakeRequest(PLUGINS_URL), options,
+    )).json();
+    assert.deepEqual(discovery.map((plugin) => plugin.id), ['mobile ui']);
+    assert.equal(
+        await (await harness.dispatchFetch(
+            new FakeRequest('/api/plugins/mobile%20ui/screen.js?v=1'), options,
+        )).text(),
+        'cached plugin',
+    );
+    assert.equal(
+        (await harness.dispatchFetch(new FakeRequest('/static/not-cached.js'), options)).status,
+        0,
+    );
+    assert.equal(harness.fetches.length, 0);
+});
+
+test('direct recovery navigation always returns the cached package list', async () => {
+    const harness = createHarness({
+        seedCaches: {
+            [RECOVERY_CACHE]: { '/static/v3/offline.html': new FakeResponse('recovery') },
+        },
+        fetchHook: async () => { throw new Error('network must not run'); },
+    });
+    const response = await harness.dispatchFetch(new FakeRequest(
+        '/static/v3/offline.html',
+        { mode: 'navigate' },
+    ));
+    assert.equal(await response.text(), 'recovery');
+    assert.equal(harness.fetches.length, 0);
 });
 
 test('incomplete current caches are skipped in favor of complete preserved caches', async () => {

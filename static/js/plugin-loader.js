@@ -794,13 +794,13 @@ async function _pollPluginStartup() {
     }
 }
 
-export async function bootstrapPluginsAndUi() {
+export async function bootstrapPluginsAndUi({ watchStartup = true } = {}) {
     // #421: never gate the nav on full plugin startup. Render it immediately
     // from /api/plugins (ready plugins active; installing/failed disabled),
     // then stream plugin status so each entry resolves in place as its
     // dependencies finish installing or its load fails.
     const plugins = await loadPlugins();
-    _streamPluginStartup();
+    if (watchStartup) _streamPluginStartup();
     return plugins;
 }
 

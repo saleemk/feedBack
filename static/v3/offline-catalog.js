@@ -1,119 +1,184 @@
-import { readDeviceCatalogSnapshot } from '../js/device-catalog.js';
+import {
+    deleteCompletePracticePackage,
+    listCompletePracticePackages,
+    openPracticePackageStore,
+} from '../js/practice-package-store.js';
 
-const songCollator = new Intl.Collator('en', { sensitivity: 'base' });
-
-function compareSongs(left, right) {
-    return songCollator.compare(left.artist, right.artist)
-        || songCollator.compare(left.title, right.title)
-        || left.id.localeCompare(right.id);
+function packageLabel(metadata) {
+    const artist = metadata?.song?.artist || 'Unknown artist';
+    const title = metadata?.song?.title || metadata?.source?.filename || 'Untitled song';
+    return `${artist} - ${title}`;
 }
 
-export function sortOfflineSongs(songs) {
-    return songs.slice().sort(compareSongs);
-}
-
-export function filterOfflineSongs(songs, query) {
-    const needle = String(query || '').trim().toLowerCase();
-    if (!needle) return songs.slice();
-    return songs.filter((song) => (
-        song.title.toLowerCase().includes(needle)
-        || song.artist.toLowerCase().includes(needle)
-    ));
-}
-
-function defaultFormatCapturedAt(capturedAt) {
-    try {
-        return new Intl.DateTimeFormat(undefined, {
-            dateStyle: 'medium',
-            timeStyle: 'short',
-        }).format(new Date(capturedAt));
-    } catch (_) {
-        return 'Capture time unavailable';
+function formatBytes(value) {
+    const bytes = Number(value);
+    if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown size';
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    const units = ['KB', 'MB', 'GB', 'TB'];
+    let amount = bytes / 1024;
+    let unit = units[0];
+    for (let index = 1; index < units.length && amount >= 1024; index += 1) {
+        amount /= 1024;
+        unit = units[index];
     }
+    return `${amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)} ${unit}`;
 }
 
-function songCountLabel(count) {
-    return `${count} ${count === 1 ? 'song' : 'songs'}`;
+function packageBytes(metadata) {
+    return Number(metadata?.chart?.bytes || 0) + Number(metadata?.audio?.bytes || 0);
+}
+
+function defaultOpenPackage(revision) {
+    globalThis.location.assign(`/v3/?offline=1&revision=${encodeURIComponent(revision)}`);
+}
+
+function defaultConfirmDelete(label) {
+    return globalThis.confirm(`Delete ${label} from this device?`);
+}
+
+async function defaultStorageEstimate() {
+    if (typeof globalThis.navigator?.storage?.estimate !== 'function') return null;
+    return globalThis.navigator.storage.estimate();
 }
 
 export function createOfflineCatalog({
     document: documentRef = globalThis.document,
-    readSnapshot = readDeviceCatalogSnapshot,
-    formatCapturedAt = defaultFormatCapturedAt,
+    openPackageStore = openPracticePackageStore,
+    listPackages = listCompletePracticePackages,
+    deletePackage = deleteCompletePracticePackage,
+    openPackage = defaultOpenPackage,
+    confirmDelete = defaultConfirmDelete,
+    estimateStorage = defaultStorageEstimate,
 } = {}) {
     let startPromise = null;
-    let songs = [];
+    let packages = [];
+    let busyRevision = null;
 
     function element(id) {
         const target = documentRef?.getElementById(id);
-        if (!target) throw new Error(`Missing offline catalog element: ${id}`);
+        if (!target) throw new Error(`Missing offline package element: ${id}`);
         return target;
     }
 
-    function showView(view) {
-        if (view !== 'home' && view !== 'library') return;
-        const home = element('offline-home');
-        const library = element('offline-library');
-        const homeButton = element('offline-nav-home');
-        const libraryButton = element('offline-nav-library');
-        const showHome = view === 'home';
-        home.hidden = !showHome;
-        library.hidden = showHome;
-        if (showHome) homeButton.setAttribute('aria-current', 'page');
-        else homeButton.removeAttribute('aria-current');
-        if (!showHome) libraryButton.setAttribute('aria-current', 'page');
-        else libraryButton.removeAttribute('aria-current');
+    function setError(message = '') {
+        const target = element('offline-storage-error');
+        target.textContent = message;
+        target.hidden = !message;
     }
 
-    function renderLibrary(query = '') {
-        const visibleSongs = filterOfflineSongs(songs, query);
-        const list = element('offline-song-list');
-        const resultCount = element('offline-result-count');
-        const empty = element('offline-library-empty');
+    function setStorageSummary(estimate = null) {
+        const downloadedBytes = packages.reduce((total, metadata) => (
+            total + packageBytes(metadata)
+        ), 0);
+        let summary = `${formatBytes(downloadedBytes)} downloaded`;
+        if (Number.isFinite(estimate?.usage) && Number.isFinite(estimate?.quota)
+                && estimate.quota > 0) {
+            summary += ` · ${formatBytes(estimate.usage)} of ${formatBytes(estimate.quota)} device storage used`;
+        }
+        element('offline-storage-usage').textContent = summary;
+    }
+
+    function renderPackages(estimate = null) {
+        const list = element('offline-package-list');
+        const empty = element('offline-package-empty');
         list.replaceChildren();
 
-        for (const song of visibleSongs) {
+        for (const metadata of packages) {
+            const revision = metadata?.revision;
             const row = documentRef.createElement('li');
-            row.className = 'song-row';
-            const title = documentRef.createElement('span');
-            title.className = 'song-title';
-            title.textContent = song.title;
-            const artist = documentRef.createElement('span');
-            artist.className = 'song-artist';
-            artist.textContent = song.artist;
-            row.append(title, artist);
+            row.className = 'package-row';
+
+            const details = documentRef.createElement('div');
+            details.className = 'package-details';
+            const title = documentRef.createElement('strong');
+            title.className = 'package-title';
+            title.textContent = packageLabel(metadata);
+            const meta = documentRef.createElement('span');
+            meta.className = 'package-meta';
+            meta.textContent = `${metadata?.arrangement?.name || 'Default chart'} · ${formatBytes(packageBytes(metadata))}`;
+            details.append(title, meta);
+
+            const actions = documentRef.createElement('div');
+            actions.className = 'package-actions';
+            const openButton = documentRef.createElement('button');
+            openButton.type = 'button';
+            openButton.className = 'primary';
+            openButton.textContent = 'Open';
+            openButton.disabled = Boolean(busyRevision) || !revision;
+            if (revision) openButton.setAttribute('data-offline-open', revision);
+            openButton.addEventListener('click', () => {
+                if (revision && !busyRevision) openPackage(revision);
+            });
+            const deleteButton = documentRef.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.className = 'secondary danger';
+            deleteButton.textContent = busyRevision === revision ? 'Deleting...' : 'Delete';
+            deleteButton.disabled = Boolean(busyRevision) || !revision;
+            if (revision) deleteButton.setAttribute('data-offline-delete', revision);
+            deleteButton.addEventListener('click', () => removePackage(metadata));
+            actions.append(openButton, deleteButton);
+            row.append(details, actions);
             list.append(row);
         }
 
-        resultCount.textContent = `${songCountLabel(visibleSongs.length)} of ${songCountLabel(songs.length)}`;
-        empty.hidden = visibleSongs.length !== 0;
-        empty.textContent = songs.length === 0
-            ? 'No songs were captured on this device.'
-            : 'No songs match your search.';
+        const count = packages.length;
+        element('offline-package-count').textContent = `${count} ${count === 1 ? 'download' : 'downloads'}`;
+        empty.hidden = count !== 0;
+        setStorageSummary(estimate);
+    }
+
+    async function readStorageEstimate() {
+        try {
+            return await estimateStorage();
+        } catch (_) {
+            return null;
+        }
+    }
+
+    async function refresh() {
+        packages = await listPackages();
+        if (!Array.isArray(packages)) packages = [];
+        renderPackages(await readStorageEstimate());
+    }
+
+    async function removePackage(metadata) {
+        const revision = metadata?.revision;
+        if (!revision || busyRevision) return;
+        const label = packageLabel(metadata);
+        if (!confirmDelete(label)) return;
+
+        busyRevision = revision;
+        setError();
+        renderPackages(await readStorageEstimate());
+        try {
+            await deletePackage(revision);
+            await refresh();
+        } catch (error) {
+            setError(`Could not delete ${label}. ${error?.message || String(error)}`);
+        } finally {
+            busyRevision = null;
+            renderPackages(await readStorageEstimate());
+        }
     }
 
     async function initialize() {
         try {
-            const snapshot = await readSnapshot();
-            if (!snapshot) return false;
-            songs = sortOfflineSongs(snapshot.songs);
-
-            element('offline-song-count').textContent = `${songCountLabel(snapshot.metadata.count)} available`;
-            element('offline-captured-at').textContent = `Captured ${formatCapturedAt(
-                snapshot.metadata.capturedAt,
-            )}`;
-            const search = element('offline-search');
-            search.addEventListener('input', () => renderLibrary(search.value));
-            element('offline-nav-home').addEventListener('click', () => showView('home'));
-            element('offline-nav-library').addEventListener('click', () => showView('library'));
-            element('offline-browse-library').addEventListener('click', () => showView('library'));
-
-            renderLibrary();
-            showView('home');
-            element('offline-recovery').hidden = true;
-            element('offline-app').hidden = false;
+            await openPackageStore();
+            await refresh();
+            element('offline-package-manager').hidden = false;
+            element('offline-storage-loading').hidden = true;
+            setError();
             return true;
-        } catch (_) {
+        } catch (error) {
+            element('offline-package-manager').hidden = false;
+            element('offline-storage-loading').hidden = true;
+            element('offline-package-list').replaceChildren();
+            element('offline-package-empty').hidden = true;
+            element('offline-package-count').textContent = 'Downloads unavailable';
+            element('offline-storage-usage').textContent = '';
+            setError(
+                `Downloaded songs could not be read on this device. ${error?.message || String(error)}`,
+            );
             return false;
         }
     }
@@ -123,7 +188,7 @@ export function createOfflineCatalog({
         return startPromise;
     }
 
-    return Object.freeze({ start, showView });
+    return Object.freeze({ start, refresh });
 }
 
 function boot() {

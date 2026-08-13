@@ -30,6 +30,7 @@
 // so the user knows why their highway looks different. Cached so we don't
 // thrash the GPU with repeat throwaway-canvas creations.
 let _webgl2Probe = null;
+let _preserveSelectionOnFallback = false;
 function _canRun3D() {
     if (_webgl2Probe !== null) return _webgl2Probe;
     try {
@@ -175,7 +176,8 @@ function _syncVenueVizPlayerClass(vizId) {
     if (player) player.classList.toggle('is-venue-visualization', vizId === 'venue');
 }
 
-export async function _populateVizPicker(plugins) {
+export async function _populateVizPicker(plugins, { preserveSelectionOnFallback = false } = {}) {
+    _preserveSelectionOnFallback = preserveSelectionOnFallback;
     const sel = document.getElementById('viz-picker');
     if (!sel) return;
     // Clear any previously-appended plugin options so calling this
@@ -293,6 +295,17 @@ export async function _populateVizPicker(plugins) {
         // the built-in renderer. 'auto' runs setViz so _autoMatchViz
         // fires, though it's a no-op before the first song_info frame.
         if (saved !== 'default') setViz(saved);
+    } else if (saved && preserveSelectionOnFallback) {
+        // An explicit offline session may have only a subset of the user's
+        // online renderers. Use the built-in renderer for this session without
+        // turning temporary cache availability into a persisted preference.
+        sel.value = 'default';
+        window.highway.setRenderer(null);
+        _syncVenueVizPlayerClass('default');
+        if (window.v3VenueScene3d && typeof window.v3VenueScene3d.syncViz === 'function') {
+            window.v3VenueScene3d.syncViz('default');
+        }
+        _notifyVizDomain('default', 'fallback');
     } else if (saved) {
         // Saved selection references an option that no longer exists —
         // plugin uninstalled since last session, renamed, or the plugin
@@ -374,7 +387,9 @@ export function setViz(id) {
     // non-conforming renderer) so the picker, localStorage, and the
     // highway's active renderer stay in sync.
     const fallbackToDefault = () => {
-        try { localStorage.setItem('vizSelection', 'default'); } catch (_) {}
+        if (!_preserveSelectionOnFallback) {
+            try { localStorage.setItem('vizSelection', 'default'); } catch (_) {}
+        }
         const sel = document.getElementById('viz-picker');
         if (sel) sel.value = 'default';
         window.highway.setRenderer(null);
@@ -749,9 +764,9 @@ export function _autoMatchViz() {
 if (window.feedBack && typeof window.feedBack.on === 'function') {
     // Highway signals when it's auto-reverted to the default renderer
     // after a broken plugin (init failure or repeated draw failures).
-    // Sync the picker + persisted selection so the UI stops advertising
-    // the broken choice and the user doesn't hit the same failure on
-    // next reload.
+    // Sync the picker and normally persist the fallback so the UI stops
+    // advertising a broken choice. Explicit offline fallback mode preserves
+    // the online preference because cache availability is temporary.
     window.feedBack.on('viz:reverted', (e) => {
         const sel = document.getElementById('viz-picker');
         if (sel) sel.value = 'default';
@@ -761,7 +776,9 @@ if (window.feedBack && typeof window.feedBack.on === 'function') {
         // Clear any Auto-resolved label — the renderer that was advertised
         // never became (or stayed) active.
         _setAutoVizLabel(null);
-        try { localStorage.setItem('vizSelection', 'default'); } catch (_) {}
+        if (!_preserveSelectionOnFallback) {
+            try { localStorage.setItem('vizSelection', 'default'); } catch (_) {}
+        }
         console.warn(
             `viz picker: reverted to default renderer (${e.detail?.reason || 'unknown'}).`
         );

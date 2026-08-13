@@ -60,6 +60,10 @@ import {
     resumeLastSession,
 } from './js/resume-session.js';
 import { startDeviceCatalogCapture } from './js/device-catalog-capture.js';
+import {
+    consumeOfflineLaunchIntent,
+    returnToOfflineRecovery,
+} from './js/offline-app.js';
 
 import {
     _applyMastery,
@@ -296,6 +300,11 @@ import {
     _markPlaybackPaused, _markPlaybackResumed, _emitPlaybackStopped, _emitSongPositionChanged,
     _waitForSongReady, _resetAudioSeekState, _audioSeek, togglePlay, seekBy, audioSeekGen,
 } from './js/transport.js';
+
+const offlineLaunchIntent = consumeOfflineLaunchIntent();
+if (offlineLaunchIntent.active) {
+    document.documentElement.dataset.offlineApp = 'true';
+}
 
 
 // Demo analytics — real impl set by demo.js; no-op in normal builds
@@ -812,7 +821,7 @@ if (_feedBackExisting && _feedBackExisting !== window.feedBack) {
 }
 window.feedback = window.feedBack;
 window.slopsmith = window.feedback;
-startDeviceCatalogCapture(window.feedBack);
+if (!offlineLaunchIntent.active) startDeviceCatalogCapture(window.feedBack);
 
 function _currentPlaybackSnapshot() {
     const song = window.feedBack && window.feedBack.currentSong || null;
@@ -1500,6 +1509,11 @@ window.feedBack.playQueue = (function () {
     if (window.feedBack) window.feedBack.closeCurrentSong = queueAwareClose;
 })();
 
+if (offlineLaunchIntent.active) {
+    window.closeCurrentSong = returnToOfflineRecovery;
+    if (window.feedBack) window.feedBack.closeCurrentSong = returnToOfflineRecovery;
+}
+
 // Settings checkbox setter (onchange="setConfirmExitSong(this.checked)").
 window.setConfirmExitSong = function (on) {
     try { localStorage.setItem('confirmExitSong', on ? '1' : '0'); } catch (_) { /* private mode */ }
@@ -1512,6 +1526,7 @@ let _exitConfirmOpen = false;   // guard against stacking confirm modals
 // User-initiated request to leave the player. Honors the confirm toggle; the
 // actual exit is always closeCurrentSong() (origin-aware teardown).
 function requestExitSong() {
+    if (offlineLaunchIntent.active) { returnToOfflineRecovery(); return; }
     if (!_exitConfirmEnabled()) { closeCurrentSong(); return; }
     if (_exitConfirmOpen) return;   // already asking
     _openExitConfirm();
@@ -2201,6 +2216,26 @@ document.addEventListener('click', e => {
 // before any playSong runs — otherwise a fast click could start
 // playback with stale settings before /api/settings returned.
 (async () => {
+    if (offlineLaunchIntent.active) {
+        document.querySelectorAll('.slider-input').forEach(el => handleSliderInput(el));
+        try { _wireSpeedPresetsOnce(); } catch (e) { console.warn('_wireSpeedPresetsOnce failed:', e); }
+        try {
+            const plugins = await bootstrapPluginsAndUi({ watchStartup: false });
+            await _populateVizPicker(Array.isArray(plugins) ? plugins : [], {
+                preserveSelectionOnFallback: true,
+            });
+            if (!offlineLaunchIntent.revision) {
+                returnToOfflineRecovery();
+                return;
+            }
+            await playOfflinePracticePackage(offlineLaunchIntent.revision);
+        } catch (error) {
+            console.error('[feedBack] offline package launch failed:', error);
+            returnToOfflineRecovery();
+        }
+        return;
+    }
+
     // Splitscreen pop-out windows (`?ssFollower=1`) load this same app but
     // get driven into "follower mode" by the splitscreen plugin once it
     // loads — which is *after* this init runs. Without this, the library

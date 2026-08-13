@@ -375,6 +375,11 @@
         installShowScreenHook();
         renderPromotedNav(); // async, non-blocking
 
+        let isOfflineApp = false;
+        try { isOfflineApp = new URLSearchParams(location.search).get('offline') === '1'; }
+        catch (_) { /* file:// or sandboxed iframe — continue normal startup */ }
+        if (isOfflineApp) return;
+
         // First-run gate: onboarding overlay is owned by prompt 15. Until it
         // exists, degrade gracefully and go straight to the dashboard.
         let profile = null;

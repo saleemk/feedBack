@@ -827,7 +827,6 @@ export async function playOfflinePracticePackage(revision, options = {}) {
         });
         _resetSectionPracticeLog();
         _scheduleSectionPracticeRetries();
-        loadSavedLoops();
         document.getElementById('quality-select').value = window.highway.getRenderScale();
         const _minScaleSel = document.getElementById('min-scale-select');
         if (_minScaleSel && window.highway.getMinRenderScale) _minScaleSel.value = String(window.highway.getMinRenderScale());

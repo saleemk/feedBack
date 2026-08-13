@@ -165,3 +165,30 @@ test('offline song info reduces and disables unsupported arrangement controls', 
     const onlineBlock = src.slice(onlineStart, onlineEnd);
     assert.match(onlineBlock, /sel\) sel\.disabled = false;/);
 });
+
+test('normal app offline startup awaits plugins and visualization before one launch', () => {
+    const src = fs.readFileSync(APP_JS, 'utf8');
+    const start = src.indexOf('if (offlineLaunchIntent.active) {', src.indexOf('(async () => {'));
+    const end = src.indexOf('// Splitscreen pop-out windows', start);
+    assert.ok(start > -1 && end > start, 'offline startup branch exists');
+    const branch = src.slice(start, end);
+
+    const plugins = branch.indexOf('await bootstrapPluginsAndUi({ watchStartup: false })');
+    const viz = branch.indexOf('await _populateVizPicker(');
+    const launch = branch.indexOf('await playOfflinePracticePackage(offlineLaunchIntent.revision)');
+    assert.ok(plugins > -1 && viz > plugins && launch > viz);
+    assert.match(branch, /preserveSelectionOnFallback: true/);
+    assert.match(branch, /if \(!offlineLaunchIntent\.revision\)[\s\S]*returnToOfflineRecovery\(\)/);
+    assert.match(branch, /catch \(error\)[\s\S]*returnToOfflineRecovery\(\)/);
+    assert.equal((branch.match(/playOfflinePracticePackage\(/g) || []).length, 1);
+    assert.match(src, /window\.closeCurrentSong = returnToOfflineRecovery/);
+    assert.match(src, /if \(offlineLaunchIntent\.active\) \{ returnToOfflineRecovery\(\); return; \}/);
+});
+
+test('offline package launch avoids server-backed saved-loop loading', () => {
+    const src = fs.readFileSync(SESSION_JS, 'utf8');
+    const start = src.indexOf('export async function playOfflinePracticePackage');
+    const end = src.indexOf('// Leave the player', start);
+    const block = src.slice(start, end);
+    assert.doesNotMatch(block, /loadSavedLoops\(\)/);
+});

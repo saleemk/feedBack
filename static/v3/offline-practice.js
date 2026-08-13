@@ -10,7 +10,6 @@ import { playOfflinePracticePackage } from '../js/session.js';
 const TOOLBAR_ID = 'v3-songs-offline';
 const PANEL_ID = 'v3-offline-panel';
 const ACTION_ID = 'offline-download';
-
 const esc = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -28,6 +27,11 @@ function formatDate(value) {
 
 function packageLabel(metadata) {
     return `${metadata.song.artist} - ${metadata.song.title}`;
+}
+
+function decodeFilename(value) {
+    if (typeof value !== 'string' || value.indexOf('%') === -1) return value || '';
+    try { return decodeURIComponent(value); } catch { return value; }
 }
 
 function defaultConfirm({ title, html, confirmText, danger = false }, windowRef) {
@@ -64,7 +68,9 @@ export function createOfflinePracticeController({
     let storageReady = false;
     let busy = false;
     let actionUnregister = null;
+    let libraryWindowListener = null;
     let observer = null;
+    let offlineFilenames = new Set();
 
     function toolbar() {
         return documentRef?.getElementById('v3-songs-toolbar');
@@ -77,6 +83,49 @@ export function createOfflinePracticeController({
     function updateCount() {
         const button = documentRef?.getElementById(TOOLBAR_ID);
         if (button) button.textContent = `Offline (${packages.length})`;
+    }
+
+    function rebuildOfflineFilenames() {
+        const next = new Set();
+        packages.forEach((metadata) => {
+            const filename = metadata?.source?.filename;
+            if (!filename) return;
+            next.add(filename);
+            next.add(decodeFilename(filename));
+        });
+        offlineFilenames = next;
+    }
+
+    function cardHasOfflinePackage(card) {
+        const filename = card?.getAttribute?.('data-fn');
+        return !!filename && (offlineFilenames.has(filename) || offlineFilenames.has(decodeFilename(filename)));
+    }
+
+    function decorateVisibleCards() {
+        const visibleCards = windowRef.v3Songs?.visibleCards;
+        if (typeof visibleCards !== 'function') return;
+        let cards;
+        try { cards = Array.from(visibleCards.call(windowRef.v3Songs)); } catch { return; }
+        cards.forEach((card) => {
+            const badge = card.querySelector?.('[data-v3-format-badge]');
+            if (!badge) return;
+            if (!badge.dataset.offlineOriginalText) {
+                badge.dataset.offlineOriginalText = badge.textContent || '';
+                badge.dataset.offlineOriginalTitle = badge.title || '';
+                badge.dataset.offlineOriginalClass = badge.className || '';
+            }
+            if (cardHasOfflinePackage(card)) {
+                badge.textContent = 'OFFLINE';
+                badge.title = 'Stored for offline practice';
+                badge.className = String(badge.dataset.offlineOriginalClass || badge.className || '')
+                    .replace(/\bbg-fb-primary\b/g, 'bg-amber-400')
+                    .replace(/\btext-white\b/g, 'text-black');
+                return;
+            }
+            badge.textContent = badge.dataset.offlineOriginalText || '';
+            badge.title = badge.dataset.offlineOriginalTitle || '';
+            badge.className = badge.dataset.offlineOriginalClass || badge.className || '';
+        });
     }
 
     function setPanelExpanded(expanded) {
@@ -168,7 +217,9 @@ export function createOfflinePracticeController({
 
     async function refresh() {
         packages = await store.listPackages();
+        rebuildOfflineFilenames();
         updateCount();
+        decorateVisibleCards();
         const panel = documentRef?.getElementById(PANEL_ID);
         if (panel) {
             panel.outerHTML = panelMarkup(await storageEstimate());
@@ -257,11 +308,20 @@ export function createOfflinePracticeController({
         observer.observe(root, { childList: true });
     }
 
+    function observeLibraryWindow() {
+        if (libraryWindowListener) return;
+        const bus = windowRef.feedBack;
+        if (!bus || typeof bus.on !== 'function') return;
+        libraryWindowListener = () => decorateVisibleCards();
+        bus.on('v3:library-window-rendered', libraryWindowListener);
+    }
+
     async function start() {
         if (!documentRef || !storageReady) {
             try {
                 await store.open();
                 packages = await store.listPackages();
+                rebuildOfflineFilenames();
                 storageReady = true;
             } catch (error) {
                 storageReady = false;
@@ -270,6 +330,8 @@ export function createOfflinePracticeController({
         }
         registerAction();
         observeLibrary();
+        observeLibraryWindow();
+        decorateVisibleCards();
         return { ready: true, packages };
     }
 
@@ -278,6 +340,10 @@ export function createOfflinePracticeController({
         observer = null;
         actionUnregister?.();
         actionUnregister = null;
+        if (libraryWindowListener && windowRef.feedBack?.off) {
+            windowRef.feedBack.off('v3:library-window-rendered', libraryWindowListener);
+        }
+        libraryWindowListener = null;
         store.close();
     }
 

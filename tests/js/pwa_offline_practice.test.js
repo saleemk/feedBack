@@ -27,9 +27,10 @@ async function loadModule() {
     return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64') + '#' + importSerial);
 }
 
-function metadata(revision = 'a'.repeat(64)) {
+function metadata(revision = 'a'.repeat(64), filename = 'Song.sloppak') {
     return {
         revision,
+        source: { filename },
         song: { artist: 'Artist', title: 'Song', duration: 42.5 },
         arrangement: { name: 'Lead' },
         chart: { bytes: 10 },
@@ -44,7 +45,11 @@ function createDocument() {
         const element = {
             id,
             textContent: '',
+            title: '',
+            className: '',
+            dataset: {},
             children: [],
+            parentNode: null,
             attributes: new Map(),
             listeners: new Map(),
             lastElementChild: null,
@@ -53,22 +58,58 @@ function createDocument() {
             },
             appendChild(child) {
                 this.children.push(child);
+                child.parentNode = this;
                 this.lastElementChild = child;
                 if (child.id) elements.set(child.id, child);
             },
             insertAdjacentHTML() {},
-            querySelector: () => null,
-            querySelectorAll: () => [],
-            remove() {},
+            querySelector(selector) {
+                return this.querySelectorAll(selector)[0] || null;
+            },
+            querySelectorAll(selector) {
+                const matches = [];
+                const visit = (node) => {
+                    node.children.forEach((child) => {
+                        if (matchesSelector(child, selector)) matches.push(child);
+                        visit(child);
+                    });
+                };
+                visit(this);
+                return matches;
+            },
+            remove() {
+                if (!this.parentNode) return;
+                this.parentNode.children = this.parentNode.children.filter((child) => child !== this);
+                this.parentNode.lastElementChild = this.parentNode.children[this.parentNode.children.length - 1] || null;
+                this.parentNode = null;
+            },
             setAttribute(name, value) {
-                this.attributes.set(name, value);
+                const stringValue = String(value);
+                this.attributes.set(name, stringValue);
+                if (name === 'id') {
+                    this.id = stringValue;
+                    elements.set(stringValue, this);
+                }
             },
             getAttribute(name) {
-                return this.attributes.get(name) || null;
+                return this.attributes.has(name) ? this.attributes.get(name) : null;
             },
         };
         if (id) elements.set(id, element);
         return element;
+    }
+    function matchesSelector(element, selector) {
+        if (!element) return false;
+        if (selector.startsWith('.')) {
+            return String(element.className || '').split(/\s+/).includes(selector.slice(1));
+        }
+        const attr = selector.match(/^\[([^=\]]+)(?:="([^"]*)")?\]$/);
+        if (attr) {
+            const value = element.getAttribute(attr[1]);
+            return attr[2] === undefined ? value !== null : value === attr[2];
+        }
+        if (selector.startsWith('#')) return element.id === selector.slice(1);
+        return false;
     }
     return {
         element: makeElement,
@@ -202,6 +243,91 @@ test('offline toolbar control is bound from the Library root observer', async ()
     }
 });
 
+test('offline status replaces and restores the visible Library card format badge', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const card = document.element();
+    const badge = document.element();
+    badge.textContent = 'FEEDPAK';
+    badge.title = '';
+    badge.className = 'bg-fb-primary text-white text-[0.5625rem]';
+    badge.setAttribute('data-v3-format-badge', '');
+    card.setAttribute('data-fn', 'Song.sloppak');
+    card.appendChild(badge);
+    let storedPackages = [metadata('b'.repeat(64), 'Song.sloppak')];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: () => () => {} }, on() {}, off() {} },
+            v3Songs: { visibleCards: () => [card] },
+        },
+        store: {
+            open: async () => {},
+            listPackages: async () => storedPackages,
+            close() {},
+        },
+    });
+
+    await controller.start();
+
+    assert.equal(badge.textContent, 'OFFLINE');
+    assert.equal(badge.title, 'Stored for offline practice');
+    assert.match(badge.className, /\bbg-amber-400\b/);
+    assert.match(badge.className, /\btext-black\b/);
+
+    storedPackages = [];
+    await controller.refresh();
+
+    assert.equal(badge.textContent, 'FEEDPAK');
+    assert.equal(badge.title, '');
+    assert.equal(badge.className, 'bg-fb-primary text-white text-[0.5625rem]');
+});
+
+test('offline status decoration follows the Library visible-card render event', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const handlers = new Map();
+    let visibleCards = [];
+    const card = document.element();
+    const badge = document.element();
+    badge.textContent = 'FEEDPAK';
+    badge.setAttribute('data-v3-format-badge', '');
+    card.setAttribute('data-fn', 'Encoded Song.sloppak');
+    card.appendChild(badge);
+    const feedBack = {
+        libraryCardActions: { register: () => () => {} },
+        on(event, handler) { handlers.set(event, handler); },
+        off(event, handler) {
+            if (handlers.get(event) === handler) handlers.delete(event);
+        },
+    };
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack,
+            v3Songs: { visibleCards: () => visibleCards },
+        },
+        store: {
+            open: async () => {},
+            listPackages: async () => [metadata('c'.repeat(64), 'Encoded%20Song.sloppak')],
+            close() {},
+        },
+    });
+
+    await controller.start();
+
+    assert.equal(badge.textContent, 'FEEDPAK');
+    assert.equal(typeof handlers.get('v3:library-window-rendered'), 'function');
+
+    visibleCards = [card];
+    handlers.get('v3:library-window-rendered')();
+
+    assert.equal(badge.textContent, 'OFFLINE');
+
+    controller.destroy();
+    assert.equal(handlers.has('v3:library-window-rendered'), false);
+});
+
 test('offline panel shows complete metadata, storage estimate, and explicit deletion', async () => {
     const source = fs.readFileSync(MODULE_PATH, 'utf8');
     assert.match(source, /Offline \(\$\{packages\.length\}\)/);
@@ -214,6 +340,9 @@ test('offline panel shows complete metadata, storage estimate, and explicit dele
     assert.match(source, /Delete offline bundle\?/);
     assert.match(source, /await store\.deletePackage\(revision\)/);
     assert.match(source, /await refresh\(\)/);
+    assert.match(source, /v3Songs\?\.visibleCards/);
+    assert.match(source, /v3:library-window-rendered/);
+    assert.match(source, /data-v3-format-badge/);
     assert.doesNotMatch(source, /documentRef\.body/);
     assert.doesNotMatch(source, /subtree:\s*true/);
 });

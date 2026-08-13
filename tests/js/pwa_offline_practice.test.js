@@ -44,6 +44,7 @@ function createDocument() {
     function makeElement(id = '') {
         const element = {
             id,
+            innerHTML: '',
             textContent: '',
             title: '',
             className: '',
@@ -62,7 +63,18 @@ function createDocument() {
                 this.lastElementChild = child;
                 if (child.id) elements.set(child.id, child);
             },
-            insertAdjacentHTML() {},
+            insertAdjacentHTML(_position, html) {
+                const idMatch = String(html).match(/\sid="([^"]+)"/);
+                const child = makeElement(idMatch ? idMatch[1] : '');
+                child.innerHTML = String(html);
+                this.appendChild(child);
+            },
+            get outerHTML() {
+                return this.innerHTML;
+            },
+            set outerHTML(value) {
+                this.innerHTML = String(value);
+            },
             querySelector(selector) {
                 return this.querySelectorAll(selector)[0] || null;
             },
@@ -400,6 +412,64 @@ test('offline status decoration follows the Library visible-card render event', 
     assert.equal(handlers.has('v3:library-window-rendered'), false);
 });
 
+test('offline panel renders compact summary, quota bar, and Open action', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const stored = metadata('e'.repeat(64), 'Song.sloppak');
+    stored.chart.bytes = 1024 * 1024;
+    stored.audio.bytes = 2 * 1024 * 1024;
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: () => () => {} } } },
+        navigator: { storage: { estimate: async () => ({ usage: 1, quota: 1000 }) } },
+        store: {
+            open: async () => {},
+            listPackages: async () => [stored],
+            close() {},
+        },
+    });
+
+    await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
+
+    const panel = document.getElementById('v3-offline-panel');
+    assert.ok(panel);
+    assert.match(panel.innerHTML, /1 download · 3\.0 MiB used/);
+    assert.match(panel.innerHTML, /role="meter"/);
+    assert.match(panel.innerHTML, /Storage usage: 1 B used \/ 1000 B quota \(0\.1%\)/);
+    assert.match(panel.innerHTML, /style="width:5\.0%"/);
+    assert.match(panel.innerHTML, />Open<\/button>/);
+    assert.doesNotMatch(panel.innerHTML, />Practice<\/button>/);
+    assert.match(panel.innerHTML, /class="hidden sm:inline"/);
+});
+
+test('offline panel tolerates unavailable quota estimates', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: () => () => {} } } },
+        navigator: { storage: { estimate: async () => { throw new Error('quota blocked'); } } },
+        store: {
+            open: async () => {},
+            listPackages: async () => [],
+            close() {},
+        },
+    });
+
+    await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
+
+    const panel = document.getElementById('v3-offline-panel');
+    assert.ok(panel);
+    assert.match(panel.innerHTML, /0 downloads · 0 B used/);
+    assert.match(panel.innerHTML, /No offline downloads yet/);
+    assert.doesNotMatch(panel.innerHTML, /role="meter"/);
+    assert.doesNotMatch(panel.innerHTML, /Unavailable/);
+});
+
 test('offline panel shows complete metadata, storage estimate, and explicit deletion', async () => {
     const source = fs.readFileSync(MODULE_PATH, 'utf8');
     assert.match(source, /Offline \(\$\{packages\.length\}\)/);
@@ -412,6 +482,9 @@ test('offline panel shows complete metadata, storage estimate, and explicit dele
     assert.match(source, /Delete offline bundle\?/);
     assert.match(source, /await store\.deletePackage\(revision\)/);
     assert.match(source, /await refresh\(\)/);
+    assert.match(source, />Open<\/button>/);
+    assert.match(source, /role="meter"/);
+    assert.match(source, /hidden sm:inline/);
     assert.match(source, /v3Songs\?\.visibleCards/);
     assert.match(source, /v3:library-window-rendered/);
     assert.match(source, /data-v3-format-badge/);

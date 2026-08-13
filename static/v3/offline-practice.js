@@ -31,6 +31,14 @@ function packageLabel(metadata) {
     return `${metadata.song.artist} - ${metadata.song.title}`;
 }
 
+function packageBytes(metadata) {
+    return (metadata?.chart?.bytes || 0) + (metadata?.audio?.bytes || 0);
+}
+
+function downloadsLabel(count) {
+    return `${count} ${count === 1 ? 'download' : 'downloads'}`;
+}
+
 function decodeFilename(value) {
     if (typeof value !== 'string' || value.indexOf('%') === -1) return value || '';
     try { return decodeURIComponent(value); } catch { return value; }
@@ -158,33 +166,52 @@ export function createOfflinePracticeController({
 
     async function storageEstimate() {
         const storage = navigatorRef?.storage;
-        if (!storage || typeof storage.estimate !== 'function') return 'Unavailable';
+        if (!storage || typeof storage.estimate !== 'function') return null;
         try {
             const estimate = await storage.estimate();
-            return `${formatBytes(estimate.usage)} used / ${formatBytes(estimate.quota)} quota`;
-        } catch { return 'Unavailable'; }
+            return {
+                usage: Number(estimate.usage),
+                quota: Number(estimate.quota),
+            };
+        } catch { return null; }
     }
 
     function panelMarkup(estimate) {
+        const totalBytes = packages.reduce((sum, metadata) => sum + packageBytes(metadata), 0);
+        const summary = downloadsLabel(packages.length) + ' · ' + formatBytes(totalBytes) + ' used';
+        const hasQuota = estimate && Number.isFinite(estimate.usage)
+            && Number.isFinite(estimate.quota) && estimate.quota > 0;
+        const quotaPct = hasQuota ? Math.max(0, Math.min(100, (estimate.usage / estimate.quota) * 100)) : 0;
+        const fillPct = hasQuota && estimate.usage > 0 ? Math.max(5, quotaPct) : quotaPct;
+        const quotaTitle = hasQuota
+            ? 'Storage usage: ' + formatBytes(estimate.usage) + ' used / '
+                + formatBytes(estimate.quota) + ' quota (' + quotaPct.toFixed(1) + '%)'
+            : '';
+        const quotaBar = hasQuota
+            ? '<div class="mt-2 h-2 overflow-hidden rounded-full border border-fb-border/60 bg-fb-card/80" title="' + esc(quotaTitle) +
+                '" role="meter" aria-label="' + esc(quotaTitle) + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' +
+                esc(quotaPct.toFixed(1)) + '"><div class="h-full rounded-full bg-amber-300" style="width:' +
+                esc(fillPct.toFixed(1)) + '%"></div></div>'
+            : '';
         const rows = packages.length
             ? packages.map((metadata) => {
-                const bytes = (metadata.chart?.bytes || 0) + (metadata.audio?.bytes || 0);
-                return '<li class="flex items-start justify-between gap-3 border-t border-fb-border/40 py-3">' +
-                    '<div class="min-w-0"><div class="truncate text-sm text-fb-text">' +
-                    esc(packageLabel(metadata)) + '</div><div class="text-xs text-fb-textDim">' +
-                    esc(metadata.arrangement.name) + ' chart · ' + formatBytes(bytes) +
-                    ' · stored ' + esc(formatDate(metadata.storedAt)) + '</div></div>' +
-                    '<div class="flex shrink-0 gap-2"><button type="button" data-offline-play="' + esc(metadata.revision) +
-                    '" class="rounded-md border border-fb-accent/60 px-2 py-1 text-xs text-fb-text">Practice</button>' +
+                const bytes = packageBytes(metadata);
+                return '<li class="flex items-center justify-between gap-2 border-t border-fb-border/40 py-2">' +
+                    '<div class="min-w-0"><div class="truncate text-sm font-medium text-fb-text">' +
+                    esc(packageLabel(metadata)) + '</div><div class="truncate text-xs text-fb-textDim">' +
+                    esc(metadata.arrangement.name) + ' · ' + formatBytes(bytes) +
+                    '<span class="hidden sm:inline"> · ' + esc(formatDate(metadata.storedAt)) + '</span></div></div>' +
+                    '<div class="flex shrink-0 gap-1.5"><button type="button" data-offline-play="' + esc(metadata.revision) +
+                    '" class="rounded-md border border-fb-accent/60 px-2 py-1 text-xs text-fb-text">Open</button>' +
                     '<button type="button" data-offline-delete="' + esc(metadata.revision) +
                     '" class="rounded-md border border-fb-border/60 px-2 py-1 text-xs text-fb-text">Delete</button></div></li>';
             }).join('')
-            : '<li class="border-t border-fb-border/40 py-3 text-sm text-fb-textDim">No offline bundles stored.</li>';
-        return '<section id="' + PANEL_ID + '" class="mb-4 border-y border-fb-border/50 bg-fb-sidebar/80 px-4 py-3" aria-labelledby="v3-offline-heading">' +
-            '<div class="flex items-start justify-between gap-3"><div><h2 id="v3-offline-heading" class="text-sm font-semibold text-fb-text">Offline practice</h2>' +
-            '<p class="mt-1 text-xs text-fb-textDim">Stored bundles play the downloaded full mix with the default chart.</p></div>' +
+            : '<li class="border-t border-fb-border/40 py-2 text-sm text-fb-textDim">No offline downloads yet. Use a song-card More menu to add one.</li>';
+        return '<section id="' + PANEL_ID + '" class="mb-4 border-y border-fb-border/50 bg-fb-sidebar/80 px-3 py-2.5 sm:px-4" aria-labelledby="v3-offline-heading">' +
+            '<div class="flex items-start justify-between gap-3"><div class="min-w-0"><h2 id="v3-offline-heading" class="text-sm font-semibold text-fb-text">Offline practice</h2>' +
+            '<p class="mt-0.5 text-xs text-fb-textDim">' + esc(summary) + '</p>' + quotaBar + '</div>' +
             '<button type="button" data-offline-close class="shrink-0 text-xs text-fb-textDim">Close</button></div>' +
-            '<p class="mt-3 text-xs text-fb-textDim">' + esc(estimate) + '</p><ul class="mt-2">' + rows + '</ul></section>';
+            '<ul class="mt-2">' + rows + '</ul></section>';
     }
 
     function bindPanel(panel) {

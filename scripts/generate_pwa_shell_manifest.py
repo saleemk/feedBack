@@ -7,6 +7,7 @@ existing document graph:
 * local ``src``/``href``/``poster`` attributes parsed with ``HTMLParser``;
 * static JavaScript ``import`` and ``export ... from`` declarations whose
   specifiers are quoted strings;
+* explicitly approved dynamic module roots plus their static import graphs;
 * CSS ``url(...)`` values that are quoted or simple unquoted strings; and
 * icon sources from the linked web app manifest, parsed as JSON.
 
@@ -34,6 +35,22 @@ OUTPUT_URL = "/static/v3/pwa-shell-assets.json"
 # reference exists for the generator to discover.
 DYNAMIC_SHELL_ASSETS = (
     "/static/v3/brand/hero.png",
+    "/static/assets/venue/themes/small-club/bass-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/bg-plate.webp",
+    "/static/assets/venue/themes/small-club/drums-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/guitar-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/piano-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/vocals-pov-bg.webp",
+)
+
+# These modules are loaded through approved runtime import() paths. Seed them
+# explicitly, then use the same static-import traversal as document modules.
+DYNAMIC_MODULE_ROOTS = (
+    "/static/vendor/three/three.module.min.js",
+    "/static/vendor/three/addons/postprocessing/EffectComposer.js",
+    "/static/vendor/three/addons/postprocessing/RenderPass.js",
+    "/static/vendor/three/addons/postprocessing/UnrealBloomPass.js",
+    "/static/vendor/three/addons/postprocessing/OutputPass.js",
 )
 
 
@@ -448,9 +465,14 @@ def _asset_path(repo_root: Path, url: str, context: Path) -> Path:
 def generate_manifest(
     repo_root: Path,
     *,
-    dynamic_assets: tuple[str, ...] = DYNAMIC_SHELL_ASSETS,
+    dynamic_assets: tuple[str, ...] | None = None,
+    dynamic_module_roots: tuple[str, ...] | None = None,
 ) -> dict[str, object]:
     repo_root = repo_root.resolve()
+    if dynamic_assets is None:
+        dynamic_assets = DYNAMIC_SHELL_ASSETS
+    if dynamic_module_roots is None:
+        dynamic_module_roots = DYNAMIC_MODULE_ROOTS
     index_path = _asset_path(repo_root, SOURCE_URL, Path("index.html"))
     parser = ShellHTMLParser()
     parser.feed(index_path.read_text(encoding="utf-8"))
@@ -476,6 +498,10 @@ def generate_manifest(
         add(raw_url, SOURCE_URL, Path(f"index.html <{tag}> {attr}"))
     for raw_url in parser.module_sources:
         url = add(raw_url, SOURCE_URL, Path("index.html module script"))
+        if url:
+            module_queue.append(url)
+    for raw_url in dynamic_module_roots:
+        url = add(raw_url, SOURCE_URL, Path("DYNAMIC_MODULE_ROOTS"))
         if url:
             module_queue.append(url)
     for raw_url in parser.web_manifests:

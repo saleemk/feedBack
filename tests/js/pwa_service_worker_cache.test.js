@@ -17,7 +17,8 @@ const RECOVERY_ASSETS = [
     '/static/v3/offline-catalog.js',
     '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v3';
+const SHELL_CACHE = 'feedback-pwa-shell-v4';
+const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v3';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -259,6 +260,68 @@ test('successful install publishes one complete shell candidate', async () => {
         (operation) => operation.type === 'put' && operation.cache === SHELL_CACHE,
     );
     assert.equal(shellPuts.at(-1).url, SHELL_MARKER);
+});
+
+test('v4 upgrade replaces v3 only after a complete candidate activates', async (t) => {
+    await t.test('successful install builds v4 while preserving complete v3', async () => {
+        const configured = successfulResponses();
+        const harness = createHarness({
+            responses: configured.responses,
+            seedCaches: {
+                [PREVIOUS_SHELL_CACHE]: { [SHELL_MARKER]: new FakeResponse('complete') },
+            },
+        });
+
+        await harness.dispatchLifecycle('install');
+
+        assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
+        assert.equal(harness.hasCache(SHELL_CACHE), true);
+        assert.equal(
+            await (await harness.cache(SHELL_CACHE).match(SHELL_MARKER)).text(),
+            'complete',
+        );
+    });
+
+    await t.test('failed v4 install preserves complete v3', async () => {
+        const configured = successfulResponses();
+        configured.responses['/static/app.js'] = new FakeResponse('failed', { status: 503 });
+        const harness = createHarness({
+            responses: configured.responses,
+            seedCaches: {
+                [PREVIOUS_SHELL_CACHE]: { [SHELL_MARKER]: new FakeResponse('complete') },
+            },
+        });
+
+        await harness.dispatchLifecycle('install');
+
+        assert.equal(harness.hasCache(SHELL_CACHE), false);
+        assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
+    });
+
+    await t.test('activation preserves v3 until v4 is complete', async () => {
+        for (const currentEntries of [{}, { '/static/app.js': new FakeResponse('partial') }]) {
+            const incomplete = createHarness({
+                seedCaches: {
+                    [SHELL_CACHE]: currentEntries,
+                    [PREVIOUS_SHELL_CACHE]: {
+                        [SHELL_MARKER]: new FakeResponse('complete'),
+                    },
+                },
+            });
+            await incomplete.dispatchLifecycle('activate');
+            assert.equal(incomplete.hasCache(PREVIOUS_SHELL_CACHE), true);
+        }
+
+        const complete = createHarness({
+            seedCaches: {
+                [SHELL_CACHE]: { [SHELL_MARKER]: new FakeResponse('complete') },
+                [PREVIOUS_SHELL_CACHE]: { [SHELL_MARKER]: new FakeResponse('complete') },
+            },
+        });
+        await complete.dispatchLifecycle('activate');
+        assert.equal(complete.hasCache(PREVIOUS_SHELL_CACHE), false);
+        assert.equal(complete.hasCache(SHELL_CACHE), true);
+    });
 });
 
 test('required asset failure deletes the candidate without failing recovery install', async () => {
@@ -523,8 +586,19 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
             has_script: true, offline_assets: ['screen.js'],
         },
         {
+            id: 'highway_3d', status: 'ready', enabled: true,
+            has_script: true, has_settings: true, has_styles: true,
+            styles: 'assets/plugin.css',
+            offline_assets: ['screen.js', 'settings.html', 'assets/plugin.css'],
+        },
+        {
             id: 'partial', status: 'ready', enabled: true,
             has_script: true, has_settings: true, offline_assets: ['screen.js'],
+        },
+        {
+            id: 'partial-style', status: 'ready', enabled: true,
+            has_script: true, has_styles: true, styles: 'assets/plugin.css',
+            offline_assets: ['screen.js'],
         },
         {
             id: 'online only', status: 'ready', enabled: true,
@@ -551,7 +625,7 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
     const discovery = await (await harness.dispatchFetch(
         new FakeRequest(PLUGINS_URL), options,
     )).json();
-    assert.deepEqual(discovery.map((plugin) => plugin.id), ['mobile ui']);
+    assert.deepEqual(discovery.map((plugin) => plugin.id), ['mobile ui', 'highway_3d']);
     assert.equal(
         await (await harness.dispatchFetch(
             new FakeRequest('/api/plugins/mobile%20ui/screen.js?v=1'), options,

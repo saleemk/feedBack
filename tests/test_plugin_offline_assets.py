@@ -234,3 +234,13 @@ def test_published_schema_accepts_and_constrains_offline_asset_paths():
     for invalid in ("", "   ", "/screen.js", "other.js", "src", "assets",
                     "src//x.js", "src/../x.js", "src/x.js?v=1", "assets\\x.css"):
         assert not pattern.fullmatch(invalid), invalid
+
+
+def test_bundled_highway_3d_declares_complete_offline_assets():
+    root = Path(__file__).resolve().parents[1]
+    plugin_dir = root / "plugins" / "highway_3d"
+    manifest = json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))
+    assets = manifest["offline"]["assets"]
+
+    assert assets == ["screen.js", "settings.html", "assets/plugin.css"]
+    assert all((plugin_dir / asset).is_file() for asset in assets)

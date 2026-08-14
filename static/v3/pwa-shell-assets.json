@@ -3,6 +3,12 @@
   "source": "/static/v3/index.html",
   "assets": [
     "/static/app.js",
+    "/static/assets/venue/themes/small-club/bass-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/bg-plate.webp",
+    "/static/assets/venue/themes/small-club/drums-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/guitar-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/piano-pov-bg.webp",
+    "/static/assets/venue/themes/small-club/vocals-pov-bg.webp",
     "/static/audio-mixer.js",
     "/static/capabilities.js",
     "/static/capabilities/audio-effects.js",
@@ -122,6 +128,17 @@
     "/static/v3/venue-viz.js",
     "/static/vendor/lottie.min.js",
     "/static/vendor/shepherd.css",
-    "/static/vendor/shepherd.min.js"
+    "/static/vendor/shepherd.min.js",
+    "/static/vendor/three/addons/postprocessing/EffectComposer.js",
+    "/static/vendor/three/addons/postprocessing/MaskPass.js",
+    "/static/vendor/three/addons/postprocessing/OutputPass.js",
+    "/static/vendor/three/addons/postprocessing/Pass.js",
+    "/static/vendor/three/addons/postprocessing/RenderPass.js",
+    "/static/vendor/three/addons/postprocessing/ShaderPass.js",
+    "/static/vendor/three/addons/postprocessing/UnrealBloomPass.js",
+    "/static/vendor/three/addons/shaders/CopyShader.js",
+    "/static/vendor/three/addons/shaders/LuminosityHighPassShader.js",
+    "/static/vendor/three/addons/shaders/OutputShader.js",
+    "/static/vendor/three/three.module.min.js"
   ]
 }

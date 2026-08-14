@@ -11,6 +11,24 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATOR_PATH = ROOT / "scripts" / "generate_pwa_shell_manifest.py"
 OUTPUT_PATH = ROOT / "static" / "v3" / "pwa-shell-assets.json"
 
+THREE_MODULE_GRAPH = {
+    "/static/vendor/three/three.module.min.js",
+    "/static/vendor/three/addons/postprocessing/EffectComposer.js",
+    "/static/vendor/three/addons/postprocessing/MaskPass.js",
+    "/static/vendor/three/addons/postprocessing/OutputPass.js",
+    "/static/vendor/three/addons/postprocessing/Pass.js",
+    "/static/vendor/three/addons/postprocessing/RenderPass.js",
+    "/static/vendor/three/addons/postprocessing/ShaderPass.js",
+    "/static/vendor/three/addons/postprocessing/UnrealBloomPass.js",
+    "/static/vendor/three/addons/shaders/CopyShader.js",
+    "/static/vendor/three/addons/shaders/LuminosityHighPassShader.js",
+    "/static/vendor/three/addons/shaders/OutputShader.js",
+}
+VENUE_WEBP_PLATES = {
+    f"/static/assets/venue/themes/small-club/{name}-pov-bg.webp"
+    for name in ("bass", "drums", "guitar", "piano", "vocals")
+} | {"/static/assets/venue/themes/small-club/bg-plate.webp"}
+
 SPEC = importlib.util.spec_from_file_location("generate_pwa_shell_manifest", GENERATOR_PATH)
 assert SPEC and SPEC.loader
 generator = importlib.util.module_from_spec(SPEC)
@@ -48,6 +66,8 @@ def test_check_mode_rejects_stale_artifact_without_rewriting(
     monkeypatch.setattr(
         generator, "__file__", str(tmp_path / "scripts" / GENERATOR_PATH.name)
     )
+    monkeypatch.setattr(generator, "DYNAMIC_SHELL_ASSETS", ())
+    monkeypatch.setattr(generator, "DYNAMIC_MODULE_ROOTS", ())
 
     assert generator.main(["--check"]) == 1
     assert (tmp_path / "static/v3/pwa-shell-assets.json").read_text() == "stale\n"
@@ -95,6 +115,20 @@ def test_real_manifest_covers_each_dependency_source():
     assert not any("google" in url.lower() for url in assets)
 
 
+def test_real_manifest_contains_approved_3d_graph_and_venue_plates_only():
+    assets = set(generator.generate_manifest(ROOT)["assets"])
+
+    assert THREE_MODULE_GRAPH <= assets
+    assert VENUE_WEBP_PLATES <= assets
+    assert not any(
+        url.startswith("/static/assets/venue/themes/small-club/")
+        and url.endswith(".png")
+        for url in assets
+    )
+    assert not any(url.endswith(("/current.mp4", "/current.webm")) for url in assets)
+    assert not any(url.startswith("/api/plugins/") for url in assets)
+
+
 def test_synthetic_graph_recurses_and_excludes_non_static_routes(tmp_path):
     _write(
         tmp_path,
@@ -129,7 +163,11 @@ def test_synthetic_graph_recurses_and_excludes_non_static_routes(tmp_path):
     )
     _write(tmp_path, "static/v3/brand/icon.png")
 
-    manifest = generator.generate_manifest(tmp_path, dynamic_assets=())
+    manifest = generator.generate_manifest(
+        tmp_path,
+        dynamic_assets=(),
+        dynamic_module_roots=(),
+    )
 
     assert manifest["assets"] == sorted([
         "/static/app.js",
@@ -145,6 +183,31 @@ def test_synthetic_graph_recurses_and_excludes_non_static_routes(tmp_path):
     assert "/static/lazy.js" not in manifest["assets"]
 
 
+def test_approved_dynamic_module_roots_recurse_through_static_imports(tmp_path):
+    _write(tmp_path, "static/v3/index.html", "<!doctype html>\n")
+    _write(
+        tmp_path,
+        "static/runtime/root.js",
+        "import './nested.js';\nimport('./lazy.js');\n",
+    )
+    _write(tmp_path, "static/runtime/nested.js", "export { value } from './leaf.js';\n")
+    _write(tmp_path, "static/runtime/leaf.js", "export const value = true;\n")
+    _write(tmp_path, "static/runtime/lazy.js", "export const lazy = true;\n")
+
+    assets = set(generator.generate_manifest(
+        tmp_path,
+        dynamic_assets=(),
+        dynamic_module_roots=("/static/runtime/root.js",),
+    )["assets"])
+
+    assert {
+        "/static/runtime/root.js",
+        "/static/runtime/nested.js",
+        "/static/runtime/leaf.js",
+    } <= assets
+    assert "/static/runtime/lazy.js" not in assets
+
+
 def test_bare_module_specifiers_fail_clearly(tmp_path):
     _write(
         tmp_path,
@@ -154,7 +217,11 @@ def test_bare_module_specifiers_fail_clearly(tmp_path):
     _write(tmp_path, "static/app.js", "import 'package-name';\n")
 
     with pytest.raises(generator.ManifestGenerationError, match="bare module specifier"):
-        generator.generate_manifest(tmp_path, dynamic_assets=())
+        generator.generate_manifest(
+            tmp_path,
+            dynamic_assets=(),
+            dynamic_module_roots=(),
+        )
 
 
 @pytest.mark.parametrize(

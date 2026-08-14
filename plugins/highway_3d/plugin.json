@@ -7,6 +7,13 @@
     "script": "screen.js",
     "styles": "assets/plugin.css",
     "settings": { "html": "settings.html", "category": "graphics", "server_files": ["plugin_uploads/highway_3d/current.mp4", "plugin_uploads/highway_3d/current.webm"] },
+    "offline": {
+        "assets": [
+            "screen.js",
+            "settings.html",
+            "assets/plugin.css"
+        ]
+    },
     "routes": "routes.py",
     "tour": "tour.json"
 }

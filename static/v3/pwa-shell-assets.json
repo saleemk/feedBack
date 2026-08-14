@@ -71,6 +71,7 @@
     "/static/panes/panes.css",
     "/static/style.css",
     "/static/svg/ff.svg",
+    "/static/svg/pause.svg",
     "/static/svg/play.svg",
     "/static/svg/rw.svg",
     "/static/tailwind.min.css",

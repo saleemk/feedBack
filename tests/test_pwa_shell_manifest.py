@@ -109,6 +109,8 @@ def test_real_manifest_covers_each_dependency_source():
         "/static/v3/brand/icon-192.png",
         "/static/v3/brand/icon-512.png",
         "/static/v3/brand/hero.png",
+        "/static/svg/play.svg",
+        "/static/svg/pause.svg",
     } <= assets
 
     assert not any(url.startswith("/api/") for url in assets)

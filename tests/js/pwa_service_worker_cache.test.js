@@ -17,8 +17,8 @@ const RECOVERY_ASSETS = [
     '/static/v3/offline-catalog.js',
     '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v4';
-const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v3';
+const SHELL_CACHE = 'feedback-pwa-shell-v6';
+const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v5';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -184,8 +184,17 @@ function successfulResponses() {
             id: 'mobile ui',
             status: 'ready',
             enabled: true,
-            offline_assets: ['screen.js', 'src/main file.js'],
             has_script: true,
+            script_type: 'module',
+            has_settings: true,
+            has_styles: true,
+            styles: 'assets/mobile_ui.css',
+            offline_assets: [
+                'screen.js',
+                'settings.html',
+                'assets/mobile_ui.css',
+                'src/main file.js',
+            ],
         },
         {
             id: 'mobile ui',
@@ -210,6 +219,8 @@ function successfulResponses() {
             '/static/app.js': new FakeResponse('core app'),
             '/static/v3/index.html': new FakeResponse('core shell'),
             '/api/plugins/mobile%20ui/screen.js': new FakeResponse('plugin entry'),
+            '/api/plugins/mobile%20ui/settings.html': new FakeResponse('plugin settings'),
+            '/api/plugins/mobile%20ui/assets/mobile_ui.css': new FakeResponse('plugin styles'),
             '/api/plugins/mobile%20ui/src/main%20file.js': new FakeResponse('plugin module'),
         },
     };
@@ -232,7 +243,9 @@ test('successful install publishes one complete shell candidate', async () => {
         SHELL_MARKER,
         MANIFEST_URL,
         PLUGINS_URL,
+        '/api/plugins/mobile%20ui/assets/mobile_ui.css',
         '/api/plugins/mobile%20ui/screen.js',
+        '/api/plugins/mobile%20ui/settings.html',
         '/api/plugins/mobile%20ui/src/main%20file.js',
         '/static/app.js',
         '/static/v3/index.html',
@@ -262,8 +275,8 @@ test('successful install publishes one complete shell candidate', async () => {
     assert.equal(shellPuts.at(-1).url, SHELL_MARKER);
 });
 
-test('v4 upgrade replaces v3 only after a complete candidate activates', async (t) => {
-    await t.test('successful install builds v4 while preserving complete v3', async () => {
+test('v6 upgrade replaces v5 only after a complete candidate activates', async (t) => {
+    await t.test('successful install builds v6 while preserving complete v5', async () => {
         const configured = successfulResponses();
         const harness = createHarness({
             responses: configured.responses,
@@ -282,7 +295,7 @@ test('v4 upgrade replaces v3 only after a complete candidate activates', async (
         );
     });
 
-    await t.test('failed v4 install preserves complete v3', async () => {
+    await t.test('failed v6 install preserves complete v5', async () => {
         const configured = successfulResponses();
         configured.responses['/static/app.js'] = new FakeResponse('failed', { status: 503 });
         const harness = createHarness({
@@ -298,7 +311,7 @@ test('v4 upgrade replaces v3 only after a complete candidate activates', async (
         assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
     });
 
-    await t.test('activation preserves v3 until v4 is complete', async () => {
+    await t.test('activation preserves v5 until v6 is complete', async () => {
         for (const currentEntries of [{}, { '/static/app.js': new FakeResponse('partial') }]) {
             const incomplete = createHarness({
                 seedCaches: {
@@ -583,7 +596,9 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
     const plugins = [
         {
             id: 'mobile ui', status: 'ready', enabled: true,
-            has_script: true, offline_assets: ['screen.js'],
+            has_script: true, script_type: 'module', has_settings: true,
+            has_styles: true, styles: 'assets/mobile_ui.css',
+            offline_assets: ['screen.js', 'settings.html', 'assets/mobile_ui.css'],
         },
         {
             id: 'highway_3d', status: 'ready', enabled: true,
@@ -592,8 +607,10 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
             offline_assets: ['screen.js', 'settings.html', 'assets/plugin.css'],
         },
         {
-            id: 'partial', status: 'ready', enabled: true,
-            has_script: true, has_settings: true, offline_assets: ['screen.js'],
+            id: 'mobile ui missing settings', status: 'ready', enabled: true,
+            has_script: true, script_type: 'module', has_settings: true,
+            has_styles: true, styles: 'assets/mobile_ui.css',
+            offline_assets: ['screen.js', 'assets/mobile_ui.css'],
         },
         {
             id: 'partial-style', status: 'ready', enabled: true,
@@ -612,6 +629,8 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
                 '/static/app.js': new FakeResponse('cached app'),
                 [PLUGINS_URL]: new FakeResponse(JSON.stringify(plugins)),
                 '/api/plugins/mobile%20ui/screen.js': new FakeResponse('cached plugin'),
+                '/api/plugins/mobile%20ui/settings.html': new FakeResponse('cached settings'),
+                '/api/plugins/mobile%20ui/assets/mobile_ui.css': new FakeResponse('cached styles'),
             },
         },
         fetchHook: async () => { throw new Error('network must not run'); },
@@ -625,7 +644,11 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
     const discovery = await (await harness.dispatchFetch(
         new FakeRequest(PLUGINS_URL), options,
     )).json();
-    assert.deepEqual(discovery.map((plugin) => plugin.id), ['mobile ui', 'highway_3d']);
+    assert.deepEqual(discovery, [plugins[0], plugins[1]]);
+    assert.equal(
+        discovery.some((plugin) => plugin.id === 'mobile ui missing settings'),
+        false,
+    );
     assert.equal(
         await (await harness.dispatchFetch(
             new FakeRequest('/api/plugins/mobile%20ui/screen.js?v=1'), options,

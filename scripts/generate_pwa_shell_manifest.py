@@ -31,9 +31,10 @@ SCHEMA = "feedback.pwa-shell-assets.v1"
 SOURCE_URL = "/static/v3/index.html"
 OUTPUT_URL = "/static/v3/pwa-shell-assets.json"
 
-# dashboard.js inserts this image at render time, so no structural HTML/CSS
-# reference exists for the generator to discover.
+# These assets are selected or inserted at runtime, so no structural HTML/CSS
+# references exist for the generator to discover.
 DYNAMIC_SHELL_ASSETS = (
+    "/static/svg/pause.svg",
     "/static/v3/brand/hero.png",
     "/static/assets/venue/themes/small-club/bass-pov-bg.webp",
     "/static/assets/venue/themes/small-club/bg-plate.webp",

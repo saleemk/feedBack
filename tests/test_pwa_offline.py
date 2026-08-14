@@ -1,5 +1,6 @@
 import importlib
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -76,10 +77,10 @@ def test_service_worker_route_has_root_scope_and_no_stale_headers(client):
 def test_worker_keeps_atomic_recovery_asset_cache_and_limits_navigation_fallback():
     source = (V3_DIR / "service-worker.js").read_text(encoding="utf-8")
 
-    assert "const CACHE_NAME = `${CACHE_PREFIX}v2`" in source
+    assert re.search(r"const CACHE_NAME = `\$\{CACHE_PREFIX\}v\d+`;", source)
     assert "const OFFLINE_URL = '/static/v3/offline.html'" in source
     assert "'/static/v3/offline-catalog.js'" in source
-    assert "'/static/js/device-catalog.js'" in source
+    assert "'/static/js/practice-package-store.js'" in source
     assert source.count("cache.addAll(") == 1
     assert "await caches.delete(CACHE_NAME)" in source
     assert "event.request.mode !== 'navigate'" in source
@@ -108,12 +109,13 @@ def test_offline_document_is_self_contained_and_retries(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert response.headers["cache-control"] == "no-cache"
-    assert "Can't reach your fee[dB]ack server" in response.text
-    assert "does not mean your songs or profile data were lost" in response.text
-    assert "window.location.reload()" in response.text
-    assert 'id="offline-app" hidden' in response.text
+    assert "Downloaded practice" in response.text
+    assert "Your fee[dB]ack server cannot be reached." in response.text
+    assert "practice packages saved on this device" in response.text
+    assert "window.location.assign('/v3/')" in response.text
+    assert 'id="offline-package-manager" hidden' in response.text
     assert 'type="module" src="/static/v3/offline-catalog.js"' in response.text
-    assert response.text.index("window.location.reload()") < response.text.index(
+    assert response.text.index("window.location.assign('/v3/')") < response.text.index(
         'src="/static/v3/offline-catalog.js"'
     )
     assert "/static/app.js" not in response.text

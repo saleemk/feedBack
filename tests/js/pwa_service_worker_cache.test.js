@@ -17,8 +17,8 @@ const RECOVERY_ASSETS = [
     '/static/v3/offline-catalog.js',
     '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v6';
-const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v5';
+const SHELL_CACHE = 'feedback-pwa-shell-v7';
+const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v6';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -201,6 +201,13 @@ function successfulResponses() {
             status: 'ready',
             offline_assets: ['screen.js'],
         },
+        {
+            id: 'section_map',
+            status: 'ready',
+            enabled: true,
+            has_script: true,
+            offline_assets: ['screen.js'],
+        },
         { id: 'disabled', status: 'ready', enabled: false, offline_assets: ['screen.js'] },
         { id: 'pending', status: 'pending', offline_assets: ['screen.js'] },
         { id: 'installing', status: 'installing', offline_assets: ['screen.js'] },
@@ -222,6 +229,7 @@ function successfulResponses() {
             '/api/plugins/mobile%20ui/settings.html': new FakeResponse('plugin settings'),
             '/api/plugins/mobile%20ui/assets/mobile_ui.css': new FakeResponse('plugin styles'),
             '/api/plugins/mobile%20ui/src/main%20file.js': new FakeResponse('plugin module'),
+            '/api/plugins/section_map/screen.js': new FakeResponse('section map entry'),
         },
     };
 }
@@ -247,6 +255,7 @@ test('successful install publishes one complete shell candidate', async () => {
         '/api/plugins/mobile%20ui/screen.js',
         '/api/plugins/mobile%20ui/settings.html',
         '/api/plugins/mobile%20ui/src/main%20file.js',
+        '/api/plugins/section_map/screen.js',
         '/static/app.js',
         '/static/v3/index.html',
     ].sort());
@@ -258,6 +267,10 @@ test('successful install publishes one complete shell candidate', async () => {
     assert.equal(fetchedPaths.filter((url) => url === PLUGINS_URL).length, 1);
     assert.equal(
         fetchedPaths.filter((url) => url === '/api/plugins/mobile%20ui/screen.js').length,
+        1,
+    );
+    assert.equal(
+        fetchedPaths.filter((url) => url === '/api/plugins/section_map/screen.js').length,
         1,
     );
     assert.equal(fetchedPaths.some((url) => url.includes('/disabled/')), false);
@@ -275,8 +288,8 @@ test('successful install publishes one complete shell candidate', async () => {
     assert.equal(shellPuts.at(-1).url, SHELL_MARKER);
 });
 
-test('v6 upgrade replaces v5 only after a complete candidate activates', async (t) => {
-    await t.test('successful install builds v6 while preserving complete v5', async () => {
+test('v7 upgrade replaces v6 only after a complete candidate activates', async (t) => {
+    await t.test('successful install builds v7 while preserving complete v6', async () => {
         const configured = successfulResponses();
         const harness = createHarness({
             responses: configured.responses,
@@ -295,7 +308,7 @@ test('v6 upgrade replaces v5 only after a complete candidate activates', async (
         );
     });
 
-    await t.test('failed v6 install preserves complete v5', async () => {
+    await t.test('failed v7 install preserves complete v6', async () => {
         const configured = successfulResponses();
         configured.responses['/static/app.js'] = new FakeResponse('failed', { status: 503 });
         const harness = createHarness({
@@ -311,7 +324,7 @@ test('v6 upgrade replaces v5 only after a complete candidate activates', async (
         assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
     });
 
-    await t.test('activation preserves v5 until v6 is complete', async () => {
+    await t.test('activation preserves v6 until v7 is complete', async () => {
         for (const currentEntries of [{}, { '/static/app.js': new FakeResponse('partial') }]) {
             const incomplete = createHarness({
                 seedCaches: {
@@ -607,6 +620,10 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
             offline_assets: ['screen.js', 'settings.html', 'assets/plugin.css'],
         },
         {
+            id: 'section_map', status: 'ready', enabled: true,
+            has_script: true, offline_assets: ['screen.js'],
+        },
+        {
             id: 'mobile ui missing settings', status: 'ready', enabled: true,
             has_script: true, script_type: 'module', has_settings: true,
             has_styles: true, styles: 'assets/mobile_ui.css',
@@ -631,6 +648,7 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
                 '/api/plugins/mobile%20ui/screen.js': new FakeResponse('cached plugin'),
                 '/api/plugins/mobile%20ui/settings.html': new FakeResponse('cached settings'),
                 '/api/plugins/mobile%20ui/assets/mobile_ui.css': new FakeResponse('cached styles'),
+                '/api/plugins/section_map/screen.js': new FakeResponse('cached section map'),
             },
         },
         fetchHook: async () => { throw new Error('network must not run'); },
@@ -644,7 +662,7 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
     const discovery = await (await harness.dispatchFetch(
         new FakeRequest(PLUGINS_URL), options,
     )).json();
-    assert.deepEqual(discovery, [plugins[0], plugins[1]]);
+    assert.deepEqual(discovery, [plugins[0], plugins[1], plugins[2]]);
     assert.equal(
         discovery.some((plugin) => plugin.id === 'mobile ui missing settings'),
         false,
@@ -654,6 +672,12 @@ test('offline app clients use cached core and eligible plugin snapshots only', a
             new FakeRequest('/api/plugins/mobile%20ui/screen.js?v=1'), options,
         )).text(),
         'cached plugin',
+    );
+    assert.equal(
+        await (await harness.dispatchFetch(
+            new FakeRequest('/api/plugins/section_map/screen.js?v=1.1.0'), options,
+        )).text(),
+        'cached section map',
     );
     assert.equal(
         (await harness.dispatchFetch(new FakeRequest('/static/not-cached.js'), options)).status,

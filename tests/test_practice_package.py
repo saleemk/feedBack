@@ -229,6 +229,39 @@ def test_single_reserved_full_stem_is_a_complete_mix(package_client):
     }
 
 
+def test_unclassified_arrangement_uses_legacy_manifest_name(package_client):
+    client, dlc = package_client
+    filename = "unclassified.feedpak"
+    _write_pack(
+        dlc,
+        filename,
+        stems=[{"id": "full", "file": "stems/full.ogg", "default": True}],
+        arrangements=[("Diagnostic", False)],
+    )
+
+    response = client.get("/api/practice-package/manifest", params={
+        "filename": filename,
+        "arrangement": 0,
+        "naming_mode": "smart",
+    })
+    assert response.status_code == 200, response.text
+    manifest = response.json()
+    assert manifest["arrangement"]["name"] == "Diagnostic"
+    assert manifest["arrangement"]["smart_name"] == "Diagnostic"
+
+    chart_response = client.get(manifest["chart"]["url"])
+    assert chart_response.status_code == 200, chart_response.text
+    canonical = _canonical_messages(
+        filename, arrangement=0, naming_mode="smart"
+    )
+    canonical_chart = b"".join(
+        practice_package_mod.compact_json_bytes(message) + b"\n"
+        for message in canonical
+    )
+    assert chart_response.content == canonical_chart
+    assert canonical[0]["arrangement_smart_name"] is None
+
+
 def test_instrument_stems_without_complete_mix_are_rejected(package_client):
     client, dlc = package_client
     filename = "instruments-only.sloppak"

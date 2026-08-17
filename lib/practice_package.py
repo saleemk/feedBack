@@ -99,7 +99,12 @@ def _validate_song_info(message: dict) -> None:
         raise _malformed()
     if not isinstance(message.get("arrangement"), str):
         raise _malformed()
-    if not isinstance(message.get("arrangement_smart_name"), str):
+    if "arrangement_smart_name" not in message:
+        raise _malformed()
+    arrangement_smart_name = message["arrangement_smart_name"]
+    if arrangement_smart_name is not None and not isinstance(
+        arrangement_smart_name, str
+    ):
         raise _malformed()
     if message.get("naming_mode") not in {"legacy", "smart"}:
         raise _malformed()
@@ -317,6 +322,9 @@ async def build_practice_package(
     resolved_arrangement = song_info["arrangement_index"]
     resolved_naming_mode = song_info["naming_mode"]
     resolved_drum_part = selected_drum_part["id"] if selected_drum_part else ""
+    resolved_smart_name = song_info["arrangement_smart_name"]
+    if resolved_smart_name is None:
+        resolved_smart_name = song_info["arrangement"]
     chart_url = "/api/practice-package/chart?" + urlencode({
         "filename": filename,
         "arrangement": resolved_arrangement,
@@ -336,7 +344,7 @@ async def build_practice_package(
         "arrangement": {
             "index": resolved_arrangement,
             "name": song_info["arrangement"],
-            "smart_name": song_info["arrangement_smart_name"],
+            "smart_name": resolved_smart_name,
             "naming_mode": resolved_naming_mode,
             "drum_part": selected_drum_part,
         },

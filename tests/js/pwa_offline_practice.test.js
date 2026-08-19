@@ -131,23 +131,163 @@ function createDocument() {
     };
 }
 
-test('storage failure leaves the offline action unregistered', async () => {
+test('storage startup failure keeps the action registered and a later download retries successfully', async () => {
     const module = await loadModule();
     const document = createDocument();
     const registrations = [];
+    const confirmed = [];
+    const downloaded = [];
+    let openCalls = 0;
     const window = {
-        feedBack: { libraryCardActions: { register: (spec) => { registrations.push(spec); } } },
+        feedBack: { libraryCardActions: { register: (spec) => {
+            registrations.push(spec);
+            return () => {};
+        } } },
+        fbNotify: { show() {} },
     };
     const controller = module.createOfflinePracticeController({
         document,
         window,
-        store: { open: async () => { throw new Error('OPFS unavailable'); } },
+        location: { href: 'https://feedback.test/' },
+        confirm: async (options) => { confirmed.push(options); return true; },
+        download: async (options) => {
+            downloaded.push(options);
+            return metadata();
+        },
+        store: {
+            open: async () => {
+                openCalls += 1;
+                if (openCalls === 1) throw new Error('OPFS unavailable');
+            },
+            listPackages: async () => [],
+            close() {},
+        },
     });
 
     const result = await controller.start();
 
     assert.equal(result.ready, false);
-    assert.equal(registrations.length, 0);
+    assert.equal(registrations.length, 3);
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    const song = { provider: 'local', filename: 'Song.sloppak', title: 'Song', artist: 'Artist' };
+    assert.equal(downloadAction.applies(song), true);
+
+    await downloadAction.run(song);
+
+    assert.equal(openCalls, 2);
+    assert.equal(confirmed.length, 1);
+    assert.equal(downloaded.length, 1);
+});
+
+test('persistent storage failure remains retryable and prevents download with a visible error', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const registrations = [];
+    const notifications = [];
+    let openCalls = 0;
+    let confirmCalls = 0;
+    let downloadCalls = 0;
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } } },
+            fbNotify: { show: (notice) => notifications.push(notice) },
+        },
+        confirm: async () => { confirmCalls += 1; return true; },
+        download: async () => { downloadCalls += 1; },
+        store: {
+            open: async () => { openCalls += 1; throw new Error('Private storage denied'); },
+            listPackages: async () => [],
+            close() {},
+        },
+    });
+
+    await controller.start();
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    await downloadAction.run({ provider: 'local', filename: 'Song.sloppak' });
+
+    assert.equal(openCalls, 2);
+    assert.equal(confirmCalls, 0);
+    assert.equal(downloadCalls, 0);
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].title, 'Offline storage unavailable');
+    assert.equal(notifications[0].message, 'Private storage denied');
+});
+
+test('concurrent startup readiness shares one storage initialization', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    let openCalls = 0;
+    let listCalls = 0;
+    let releaseOpen;
+    const openGate = new Promise((resolve) => { releaseOpen = resolve; });
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: () => () => {} } } },
+        store: {
+            open: async () => { openCalls += 1; await openGate; },
+            listPackages: async () => { listCalls += 1; return []; },
+            close() {},
+        },
+    });
+
+    const firstStart = controller.start();
+    const secondStart = controller.start();
+    assert.equal(openCalls, 1);
+    releaseOpen();
+    const results = await Promise.all([firstStart, secondStart]);
+
+    assert.deepEqual(results.map((result) => result.ready), [true, true]);
+    assert.equal(openCalls, 1);
+    assert.equal(listCalls, 1);
+});
+
+test('retry synchronization prevents a stale download action from duplicating a stored package', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const registrations = [];
+    const notifications = [];
+    let openCalls = 0;
+    let confirmCalls = 0;
+    let downloadCalls = 0;
+    const stored = metadata();
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } } },
+            fbNotify: { show: (notice) => notifications.push(notice) },
+        },
+        confirm: async () => { confirmCalls += 1; return true; },
+        download: async () => { downloadCalls += 1; },
+        store: {
+            open: async () => {
+                openCalls += 1;
+                if (openCalls === 1) throw new Error('OPFS unavailable');
+            },
+            listPackages: async () => [stored],
+            close() {},
+        },
+    });
+
+    await controller.start();
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    const openAction = registrations.find((spec) => spec.id === 'offline-open');
+    const song = { provider: 'local', filename: 'Song.sloppak' };
+    assert.equal(downloadAction.applies(song), true);
+
+    await downloadAction.run(song);
+
+    assert.equal(confirmCalls, 0);
+    assert.equal(downloadCalls, 0);
+    assert.equal(downloadAction.applies(song), false);
+    assert.equal(openAction.applies(song), true);
+    assert.equal(notifications[0].title, 'Offline bundle already stored');
 });
 
 test('ready storage registers the menu action and confirms before downloading', async () => {

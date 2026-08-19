@@ -76,6 +76,7 @@ export function createOfflinePracticeController({
 } = {}) {
     let packages = [];
     let storageReady = false;
+    let storageReadiness = null;
     let busy = false;
     let actionUnregister = null;
     let libraryWindowListener = null;
@@ -122,7 +123,7 @@ export function createOfflinePracticeController({
     }
 
     function canUseOfflineActions(song) {
-        return storageReady && song?.provider === 'local' && !!song?.filename;
+        return song?.provider === 'local' && !!song?.filename;
     }
 
     function decorateVisibleCards() {
@@ -294,7 +295,7 @@ export function createOfflinePracticeController({
         } finally { busy = false; }
     }
 
-    async function refresh() {
+    async function synchronizePackages() {
         packages = await store.listPackages();
         rebuildOfflineFilenames();
         updateCount();
@@ -305,6 +306,30 @@ export function createOfflinePracticeController({
             bindPanel(documentRef.getElementById(PANEL_ID));
         }
         return packages;
+    }
+
+    async function ensureStorageReady() {
+        if (storageReady) return packages;
+        if (storageReadiness) return storageReadiness;
+        storageReadiness = (async () => {
+            await store.open();
+            const synchronized = await synchronizePackages();
+            storageReady = true;
+            return synchronized;
+        })();
+        try {
+            return await storageReadiness;
+        } catch (error) {
+            storageReady = false;
+            throw error;
+        } finally {
+            storageReadiness = null;
+        }
+    }
+
+    async function refresh() {
+        if (!storageReady) return ensureStorageReady();
+        return synchronizePackages();
     }
 
     async function showPanel() {
@@ -320,6 +345,17 @@ export function createOfflinePracticeController({
 
     async function downloadSong(song) {
         if (!song?.filename || busy) return;
+        try {
+            await ensureStorageReady();
+        } catch (error) {
+            notify(windowRef, 'Offline storage unavailable', error.message || String(error), '!', '#EF4444');
+            return;
+        }
+        const existing = packageForSong(song);
+        if (existing) {
+            notify(windowRef, 'Offline bundle already stored', packageLabel(existing));
+            return;
+        }
         const label = packageLabel({ song: {
             artist: song.artist || 'Unknown artist',
             title: song.title || song.filename,
@@ -422,21 +458,14 @@ export function createOfflinePracticeController({
     }
 
     async function start() {
-        if (!documentRef || !storageReady) {
-            try {
-                await store.open();
-                packages = await store.listPackages();
-                rebuildOfflineFilenames();
-                storageReady = true;
-            } catch (error) {
-                storageReady = false;
-                return { ready: false, error };
-            }
-        }
         registerAction();
         observeLibrary();
         observeLibraryWindow();
-        decorateVisibleCards();
+        try {
+            await ensureStorageReady();
+        } catch (error) {
+            return { ready: false, error };
+        }
         return { ready: true, packages };
     }
 

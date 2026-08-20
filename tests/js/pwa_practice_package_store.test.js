@@ -366,6 +366,58 @@ function createFakeOpfs({ log = [] } = {}) {
         fileBytes(revision, name) {
             return directoryNode(['practice-packages', revision])?.files.get(name)?.bytes;
         },
+        hasFile(relativePath) {
+            const parts = relativePath.split('/');
+            const name = parts.pop();
+            return Boolean(directoryNode(parts)?.files.has(name));
+        },
+        fileBytesAt(relativePath) {
+            const parts = relativePath.split('/');
+            const name = parts.pop();
+            return directoryNode(parts)?.files.get(name)?.bytes;
+        },
+        removeFileAt(relativePath) {
+            const parts = relativePath.split('/');
+            const name = parts.pop();
+            directoryNode(parts)?.files.delete(name);
+        },
+        replaceFileAt(relativePath, bytes) {
+            const parts = relativePath.split('/');
+            const name = parts.pop();
+            let node = root;
+            for (const part of parts) {
+                let child = node.directories.get(part);
+                if (!child) {
+                    child = { kind: 'directory', name: part, directories: new Map(), files: new Map() };
+                    node.directories.set(part, child);
+                }
+                node = child;
+            }
+            node.files.set(name, { name, bytes: Uint8Array.from(bytes) });
+        },
+    };
+}
+
+function createFakeLockManager() {
+    let tail = Promise.resolve();
+    const state = { requests: [], entries: 0, exits: 0 };
+    return {
+        state,
+        request(name, options, callback) {
+            state.requests.push({ name, options: clone(options) });
+            const previous = tail;
+            let release;
+            tail = new Promise((resolve) => { release = resolve; });
+            return previous.then(async () => {
+                state.entries += 1;
+                try {
+                    return await callback({ name, mode: options.mode });
+                } finally {
+                    state.exits += 1;
+                    release();
+                }
+            });
+        },
     };
 }
 
@@ -398,9 +450,12 @@ function streamBytes(bytes, chunkSize = 5) {
     return trackedStream(bytes, chunkSize).stream;
 }
 
-function fixture() {
-    const chartBytes = Buffer.from('{"type":"song_info"}\n{"type":"ready"}\n');
-    const audioBytes = Buffer.from('small fake full mix streamed in chunks');
+function fixture({
+    chartBytes = Buffer.from('{"type":"song_info"}\n{"type":"ready"}\n'),
+    audioBytes = Buffer.from('small fake full mix streamed in chunks'),
+    arrangementIndex = 2,
+    arrangementName = 'Lead',
+} = {}) {
     const chartSha = sha256(chartBytes);
     const audioSha = sha256(audioBytes);
     const revision = sha256(Buffer.concat([
@@ -413,9 +468,9 @@ function fixture() {
         source: { filename: 'Artist/Song & Mix.sloppak' },
         song: { title: 'Song', artist: 'Artist', duration: 123.5 },
         arrangement: {
-            index: 2,
-            name: 'Lead',
-            smart_name: 'Lead Guitar',
+            index: arrangementIndex,
+            name: arrangementName,
+            smart_name: `${arrangementName} Guitar`,
             naming_mode: 'smart',
             drum_part: null,
         },
@@ -448,6 +503,19 @@ function fixture() {
     };
 }
 
+function secondArrangement(audioBytes) {
+    return fixture({
+        chartBytes: Buffer.from('{"type":"song_info","arrangement":"Rhythm"}\n{"type":"ready"}\n'),
+        audioBytes,
+        arrangementIndex: 3,
+        arrangementName: 'Rhythm',
+    });
+}
+
+function sharedAudioPath(input) {
+    return `practice-packages/audio/${input.manifest.audio.sha256}.ogg`;
+}
+
 async function createStore(fakeIdb, fakeOpfs, options = {}) {
     const module = await loadModule();
     return {
@@ -458,6 +526,7 @@ async function createStore(fakeIdb, fakeOpfs, options = {}) {
             crypto: webcrypto,
             FileClass: FakeFile,
             now: () => 123,
+            requestLock: null,
             ...options,
         }),
     };
@@ -730,6 +799,312 @@ test('an existing complete revision is validated and reused without rewriting st
     assert.equal(fakeOpfs.state.writes.length, writeCount);
     assert.equal(chart.tracker.cancelCalls, 1);
     assert.equal(audio.tracker.cancelCalls, 1);
+});
+
+test('lock-capable saves share one streamed audio file across independent revisions', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const lead = fixture();
+    const rhythm = secondArrangement(lead.audioBytes);
+    const reusedAudio = trackedStream(rhythm.audioBytes);
+
+    await store.saveCompletePackage(lead.manifest, lead.artifacts());
+    await store.saveCompletePackage(rhythm.manifest, {
+        chart: {
+            stream: streamBytes(rhythm.chartBytes),
+            mediaType: 'application/x-ndjson',
+        },
+        audio: { stream: reusedAudio.stream, mediaType: 'audio/ogg' },
+    });
+
+    const audioPath = sharedAudioPath(lead);
+    assert.equal(fakeOpfs.hasFile(audioPath), true);
+    assert.equal(fakeOpfs.hasFile(`practice-packages/${lead.revision}/audio.ogg`), false);
+    assert.equal(fakeOpfs.hasFile(`practice-packages/${rhythm.revision}/audio.ogg`), false);
+    assert.equal(
+        fakeOpfs.state.calls.filter((call) => call === `file:${audioPath}:true`).length,
+        1,
+    );
+    assert.equal(reusedAudio.tracker.cancelCalls, 1);
+
+    const storedLead = await store.readPackage(lead.revision);
+    const storedRhythm = await store.readPackage(rhythm.revision);
+    assert.equal(await storedLead.chart.text(), lead.chartBytes.toString());
+    assert.equal(await storedRhythm.chart.text(), rhythm.chartBytes.toString());
+    assert.equal(await storedLead.audio.text(), lead.audioBytes.toString());
+    assert.equal(await storedRhythm.audio.text(), rhythm.audioBytes.toString());
+    assert.deepEqual(fakeOpfs.state.arrayBuffers.filter((path) => path.endsWith('.ogg')), []);
+});
+
+test('a Web Lock serializes shared saves from separate store instances', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const first = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    const second = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    const lead = fixture();
+    const rhythm = secondArrangement(lead.audioBytes);
+
+    await Promise.all([
+        first.store.saveCompletePackage(lead.manifest, lead.artifacts()),
+        second.store.saveCompletePackage(rhythm.manifest, rhythm.artifacts()),
+    ]);
+
+    const audioPath = sharedAudioPath(lead);
+    assert.equal(locks.state.entries, 2);
+    assert.equal(locks.state.exits, 2);
+    assert.deepEqual(
+        locks.state.requests.map(({ name, options }) => [name, options.mode]),
+        [
+            ['feedback-practice-packages:audio:v1', 'exclusive'],
+            ['feedback-practice-packages:audio:v1', 'exclusive'],
+        ],
+    );
+    assert.equal(
+        fakeOpfs.state.calls.filter((call) => call === `file:${audioPath}:true`).length,
+        1,
+    );
+    assert.equal((await first.store.listPackages()).length, 2);
+});
+
+test('save and delete interleaving preserves the newly saved shared reference', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const first = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    const second = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    const lead = fixture();
+    const rhythm = secondArrangement(lead.audioBytes);
+    await first.store.saveCompletePackage(lead.manifest, lead.artifacts());
+
+    const deleting = first.store.deletePackage(lead.revision);
+    const saving = second.store.saveCompletePackage(rhythm.manifest, rhythm.artifacts());
+    await Promise.all([deleting, saving]);
+
+    assert.equal(await first.store.readPackage(lead.revision), null);
+    assert.equal((await second.store.readPackage(rhythm.revision)).metadata.revision, rhythm.revision);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(lead)), true);
+});
+
+test('shared audio is retained until its final metadata reference is deleted', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const lead = fixture();
+    const rhythm = secondArrangement(lead.audioBytes);
+    await store.saveCompletePackage(lead.manifest, lead.artifacts());
+    await store.saveCompletePackage(rhythm.manifest, rhythm.artifacts());
+
+    await store.deletePackage(lead.revision);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(lead)), true);
+    assert.equal((await store.readPackage(rhythm.revision)).metadata.revision, rhythm.revision);
+
+    await store.deletePackage(rhythm.revision);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(lead)), false);
+});
+
+test('missing locks and pre-callback lock failures use the legacy layout', async (t) => {
+    await t.test('Web Locks unavailable', async () => {
+        const fakeIdb = createFakeIndexedDB();
+        const fakeOpfs = createFakeOpfs();
+        const { store } = await createStore(fakeIdb, fakeOpfs, { requestLock: null });
+        const input = fixture();
+
+        await store.saveCompletePackage(input.manifest, input.artifacts());
+
+        assert.equal(fakeOpfs.hasFile(`practice-packages/${input.revision}/audio.ogg`), true);
+        assert.equal(fakeOpfs.hasFile(sharedAudioPath(input)), false);
+    });
+
+    await t.test('lock acquisition fails before callback', async () => {
+        const fakeIdb = createFakeIndexedDB();
+        const fakeOpfs = createFakeOpfs();
+        const { store } = await createStore(fakeIdb, fakeOpfs, {
+            requestLock: async () => { throw new DOMException('locks unavailable', 'NotSupportedError'); },
+        });
+        const input = fixture();
+
+        await store.saveCompletePackage(input.manifest, input.artifacts());
+
+        assert.equal(fakeOpfs.hasFile(`practice-packages/${input.revision}/audio.ogg`), true);
+        assert.equal(fakeOpfs.hasFile(sharedAudioPath(input)), false);
+    });
+});
+
+test('a callback-started shared write failure never retries through legacy storage', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const input = fixture();
+    const audio = trackedStream(input.audioBytes);
+    fakeOpfs.failNext('write', sharedAudioPath(input));
+
+    await assert.rejects(store.saveCompletePackage(input.manifest, {
+        chart: {
+            stream: streamBytes(input.chartBytes),
+            mediaType: 'application/x-ndjson',
+        },
+        audio: { stream: audio.stream, mediaType: 'audio/ogg' },
+    }));
+
+    assert.equal(locks.state.entries, 1);
+    assert.equal(audio.tracker.cancelCalls, 1);
+    assert.equal(fakeOpfs.hasFile(`practice-packages/${input.revision}/audio.ogg`), false);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(input)), false);
+    assert.deepEqual(fakeIdb.rawGetAll(METADATA_STORE), []);
+});
+
+test('lock-capable reads and deletes preserve legacy package compatibility', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const legacy = await createStore(fakeIdb, fakeOpfs, { requestLock: null });
+    const input = fixture();
+    await legacy.store.saveCompletePackage(input.manifest, input.artifacts());
+
+    const locks = createFakeLockManager();
+    const current = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    assert.equal((await current.store.readPackage(input.revision)).metadata.revision, input.revision);
+
+    await current.store.deletePackage(input.revision);
+    assert.equal(fakeOpfs.hasRevision(input.revision), false);
+    assert.equal(await current.store.readPackage(input.revision), null);
+});
+
+test('invalid shared audio falls back to legacy and is not replaced while referenced', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const legacy = await createStore(fakeIdb, fakeOpfs, { requestLock: null });
+    const lead = fixture();
+    await legacy.store.saveCompletePackage(lead.manifest, lead.artifacts());
+    fakeOpfs.replaceFileAt(sharedAudioPath(lead), [1]);
+
+    const locks = createFakeLockManager();
+    const current = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    assert.equal(await (await current.store.readPackage(lead.revision)).audio.text(), lead.audioBytes.toString());
+
+    const rhythm = secondArrangement(lead.audioBytes);
+    await assert.rejects(
+        current.store.saveCompletePackage(rhythm.manifest, rhythm.artifacts()),
+        /referenced shared audio artifact has an invalid byte count/,
+    );
+    assert.deepEqual(fakeOpfs.fileBytesAt(sharedAudioPath(lead)), Uint8Array.from([1]));
+    assert.equal(await current.store.readPackageMetadata(rhythm.revision), null);
+});
+
+test('a shared-only package fails safely when its audio file is missing', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { module, store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const input = fixture();
+    await store.saveCompletePackage(input.manifest, input.artifacts());
+    fakeOpfs.removeFileAt(sharedAudioPath(input));
+
+    await assert.rejects(
+        store.readPackage(input.revision),
+        module.PracticePackageStoreError,
+    );
+    assert.equal((await store.listPackages()).length, 1);
+});
+
+test('an unreferenced wrong-sized shared file is replaced by a streamed save', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { store } = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+    const input = fixture();
+    fakeOpfs.replaceFileAt(sharedAudioPath(input), [1]);
+
+    await store.saveCompletePackage(input.manifest, input.artifacts());
+
+    assert.deepEqual(
+        fakeOpfs.fileBytesAt(sharedAudioPath(input)),
+        Uint8Array.from(input.audioBytes),
+    );
+    assert.deepEqual(fakeOpfs.state.arrayBuffers.filter((path) => path.endsWith('.ogg')), []);
+});
+
+test('shared publication rollback removes new audio and preserves existing owners', async (t) => {
+    await t.test('first metadata publication fails', async () => {
+        const fakeIdb = createFakeIndexedDB();
+        const fakeOpfs = createFakeOpfs();
+        const locks = createFakeLockManager();
+        const { store } = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+        const input = fixture();
+        fakeIdb.failNextRequest(METADATA_STORE, 'put');
+
+        await assert.rejects(store.saveCompletePackage(input.manifest, input.artifacts()));
+
+        assert.equal(fakeOpfs.hasRevision(input.revision), false);
+        assert.equal(fakeOpfs.hasFile(sharedAudioPath(input)), false);
+        assert.deepEqual(fakeIdb.rawGetAll(METADATA_STORE), []);
+    });
+
+    await t.test('second metadata publication fails', async () => {
+        const fakeIdb = createFakeIndexedDB();
+        const fakeOpfs = createFakeOpfs();
+        const locks = createFakeLockManager();
+        const { store } = await createStore(fakeIdb, fakeOpfs, { requestLock: locks.request });
+        const lead = fixture();
+        const rhythm = secondArrangement(lead.audioBytes);
+        await store.saveCompletePackage(lead.manifest, lead.artifacts());
+        fakeIdb.failNextRequest(METADATA_STORE, 'put');
+
+        await assert.rejects(store.saveCompletePackage(rhythm.manifest, rhythm.artifacts()));
+
+        assert.equal(fakeOpfs.hasFile(sharedAudioPath(lead)), true);
+        assert.equal((await store.readPackage(lead.revision)).metadata.revision, lead.revision);
+        assert.equal(await store.readPackageMetadata(rhythm.revision), null);
+    });
+});
+
+test('a failed second chart write leaves the first shared package usable', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const lead = fixture();
+    const rhythm = secondArrangement(lead.audioBytes);
+    await store.saveCompletePackage(lead.manifest, lead.artifacts());
+    fakeOpfs.failNext('write', `practice-packages/${rhythm.revision}/chart.ndjson`);
+
+    await assert.rejects(store.saveCompletePackage(rhythm.manifest, rhythm.artifacts()));
+
+    assert.equal((await store.readPackage(lead.revision)).metadata.revision, lead.revision);
+    assert.equal(await store.readPackageMetadata(rhythm.revision), null);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(lead)), true);
+});
+
+test('failed final shared cleanup hides metadata and leaves a safe orphan', async () => {
+    const fakeIdb = createFakeIndexedDB();
+    const fakeOpfs = createFakeOpfs();
+    const locks = createFakeLockManager();
+    const { module, store } = await createStore(fakeIdb, fakeOpfs, {
+        requestLock: locks.request,
+    });
+    const input = fixture();
+    await store.saveCompletePackage(input.manifest, input.artifacts());
+    fakeOpfs.failNext('remove', sharedAudioPath(input));
+
+    await assert.rejects(store.deletePackage(input.revision), module.PracticePackageStoreError);
+
+    assert.equal(await store.readPackageMetadata(input.revision), null);
+    assert.equal(fakeOpfs.hasRevision(input.revision), false);
+    assert.equal(fakeOpfs.hasFile(sharedAudioPath(input)), true);
 });
 
 test('version changes close the cached database and the next metadata read reopens it', async () => {

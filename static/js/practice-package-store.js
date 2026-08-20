@@ -5,6 +5,8 @@ export const PRACTICE_PACKAGE_CHART_MAX_BYTES = 32 * 1024 * 1024;
 export const PRACTICE_PACKAGE_ROOT_DIRECTORY = 'practice-packages';
 export const PRACTICE_PACKAGE_CHART_FILENAME = 'chart.ndjson';
 export const PRACTICE_PACKAGE_AUDIO_FILENAME = 'audio.ogg';
+export const PRACTICE_PACKAGE_SHARED_AUDIO_DIRECTORY = 'audio';
+export const PRACTICE_PACKAGE_AUDIO_LOCK_NAME = 'feedback-practice-packages:audio:v1';
 
 const MANIFEST_SCHEMA = 'feedback.practice-package.manifest.v1';
 const CHART_MEDIA_TYPE = 'application/x-ndjson';
@@ -305,6 +307,9 @@ function hexFromBytes(value) {
 export function createPracticePackageStore({
     indexedDB = globalThis.indexedDB,
     getOpfsRoot = () => globalThis.navigator?.storage?.getDirectory?.(),
+    requestLock = globalThis.navigator?.locks?.request
+        ? globalThis.navigator.locks.request.bind(globalThis.navigator.locks)
+        : null,
     crypto = globalThis.crypto,
     FileClass = globalThis.File,
     now = Date.now,
@@ -313,6 +318,7 @@ export function createPracticePackageStore({
     let openingDatabase = null;
     let opfsRoot = null;
     let openingOpfs = null;
+    let mutationTail = Promise.resolve();
 
     function openDatabase() {
         if (database) return Promise.resolve(database);
@@ -494,20 +500,35 @@ export function createPracticePackageStore({
         return error?.name === 'NotFoundError';
     }
 
-    async function getRevisionDirectory(revision, { create = false } = {}) {
+    async function getPackagesDirectory({ create = false } = {}) {
         const root = await openOpfs();
-        const packages = await root.getDirectoryHandle(
+        return root.getDirectoryHandle(
             PRACTICE_PACKAGE_ROOT_DIRECTORY,
             { create },
         );
+    }
+
+    async function getRevisionDirectory(revision, { create = false } = {}) {
+        const packages = await getPackagesDirectory({ create });
         return packages.getDirectoryHandle(revision, { create });
     }
 
+    async function getSharedAudioDirectory({ create = false } = {}) {
+        const packages = await getPackagesDirectory({ create });
+        return packages.getDirectoryHandle(
+            PRACTICE_PACKAGE_SHARED_AUDIO_DIRECTORY,
+            { create },
+        );
+    }
+
+    function sharedAudioFilename(expectedSha256) {
+        return `${expectedSha256}.ogg`;
+    }
+
     async function removeRevisionDirectory(revision) {
-        const root = await openOpfs();
         let packages;
         try {
-            packages = await root.getDirectoryHandle(PRACTICE_PACKAGE_ROOT_DIRECTORY);
+            packages = await getPackagesDirectory();
         } catch (error) {
             if (isNotFound(error)) return;
             throw error;
@@ -524,6 +545,21 @@ export function createPracticePackageStore({
             await removeRevisionDirectory(revision);
         } catch (_) {
             // Cleanup is best effort so the original write failure remains visible.
+        }
+    }
+
+    async function removeSharedAudio(expectedSha256) {
+        let directory;
+        try {
+            directory = await getSharedAudioDirectory();
+        } catch (error) {
+            if (isNotFound(error)) return;
+            throw error;
+        }
+        try {
+            await directory.removeEntry(sharedAudioFilename(expectedSha256));
+        } catch (error) {
+            if (!isNotFound(error)) throw error;
         }
     }
 
@@ -555,15 +591,39 @@ export function createPracticePackageStore({
         }
     }
 
+    async function readSharedAudio(metadata) {
+        const directory = await getSharedAudioDirectory();
+        const handle = await directory.getFileHandle(
+            sharedAudioFilename(metadata.audio.expectedSha256),
+        );
+        const audio = requireFile(await handle.getFile(), 'stored shared audio artifact');
+        validateFileSize(audio, metadata.audio.bytes, 'stored shared audio artifact');
+        return audio;
+    }
+
+    async function readLegacyAudio(metadata) {
+        const directory = await getRevisionDirectory(metadata.revision);
+        const handle = await directory.getFileHandle(PRACTICE_PACKAGE_AUDIO_FILENAME);
+        const audio = requireFile(await handle.getFile(), 'stored audio artifact');
+        validateFileSize(audio, metadata.audio.bytes, 'stored audio artifact');
+        return audio;
+    }
+
+    async function readPackageAudio(metadata) {
+        try {
+            return await readSharedAudio(metadata);
+        } catch (_) {
+            return readLegacyAudio(metadata);
+        }
+    }
+
     async function readPackageFiles(metadata) {
         try {
             const directory = await getRevisionDirectory(metadata.revision);
             const chartHandle = await directory.getFileHandle(PRACTICE_PACKAGE_CHART_FILENAME);
-            const audioHandle = await directory.getFileHandle(PRACTICE_PACKAGE_AUDIO_FILENAME);
             const chart = requireFile(await chartHandle.getFile(), 'stored chart artifact');
-            const audio = requireFile(await audioHandle.getFile(), 'stored audio artifact');
+            const audio = await readPackageAudio(metadata);
             validateFileSize(chart, metadata.chart.bytes, 'stored chart artifact');
-            validateFileSize(audio, metadata.audio.bytes, 'stored audio artifact');
             if (await digestHex(await chart.arrayBuffer()) !== metadata.chart.sha256) {
                 throw new TypeError('stored chart artifact SHA-256 is invalid');
             }
@@ -613,13 +673,99 @@ export function createPracticePackageStore({
         return { metadata, ...await readPackageFiles(metadata) };
     }
 
-    async function saveCompletePackage(manifest, artifacts, { storedAt } = {}) {
+    async function audioReferenceCount(expectedSha256) {
+        const request = await runTransaction(
+            [PRACTICE_PACKAGE_METADATA_STORE],
+            'readonly',
+            (transaction) => transaction.objectStore(
+                PRACTICE_PACKAGE_METADATA_STORE,
+            ).getAll(),
+        );
+        return request.result.reduce((count, record) => (
+            copyStoredMetadata(record).audio.expectedSha256 === expectedSha256
+                ? count + 1
+                : count
+        ), 0);
+    }
+
+    async function cleanupUnreferencedSharedAudio(expectedSha256) {
+        try {
+            if (await audioReferenceCount(expectedSha256) === 0) {
+                await removeSharedAudio(expectedSha256);
+            }
+        } catch (_) {
+            // A safe orphan is preferable to deleting an artifact with unknown owners.
+        }
+    }
+
+    async function writeOrReuseSharedAudio(metadata, audioInput) {
+        try {
+            const audio = await readSharedAudio(metadata);
+            await releaseUnusedStream(audioInput);
+            return { audio, created: false };
+        } catch (error) {
+            if (!isNotFound(error) && !(error instanceof TypeError)) throw error;
+            if (error instanceof TypeError
+                    && await audioReferenceCount(metadata.audio.expectedSha256) > 0) {
+                throw new TypeError('referenced shared audio artifact has an invalid byte count');
+            }
+        }
+
+        const expectedSha256 = metadata.audio.expectedSha256;
+        await removeSharedAudio(expectedSha256);
+        let created = false;
+        try {
+            const directory = await getSharedAudioDirectory({ create: true });
+            created = true;
+            const audio = await writeArtifact(
+                directory,
+                sharedAudioFilename(expectedSha256),
+                audioInput,
+            );
+            validateFileSize(audio, metadata.audio.bytes, 'shared audio artifact');
+            return { audio, created: true };
+        } catch (error) {
+            if (created) await cleanupUnreferencedSharedAudio(expectedSha256);
+            throw error;
+        }
+    }
+
+    function queueMutation(operation) {
+        const result = mutationTail.then(operation, operation);
+        mutationTail = result.catch(() => {});
+        return result;
+    }
+
+    async function withAudioMutationLock(lockedOperation, fallbackOperation) {
+        if (typeof requestLock !== 'function') return fallbackOperation();
+        let entered = false;
+        try {
+            return await requestLock(
+                PRACTICE_PACKAGE_AUDIO_LOCK_NAME,
+                { mode: 'exclusive' },
+                async () => {
+                    entered = true;
+                    return lockedOperation();
+                },
+            );
+        } catch (error) {
+            if (entered) throw error;
+            return fallbackOperation();
+        }
+    }
+
+    async function saveCompletePackageMutation(
+        manifest,
+        artifacts,
+        { storedAt, shareAudio },
+    ) {
         const artifactInput = requireRecord(artifacts, 'package artifacts');
         const suppliedArtifacts = [];
         let chartInput;
         let audioInput;
         let descriptor;
         let shouldCleanup = false;
+        let createdSharedAudio = false;
         try {
             let descriptorError = null;
             try {
@@ -682,12 +828,17 @@ export function createPracticePackageStore({
             if (await digestHex(revisionBytes) !== metadata.revision) {
                 throw new TypeError('package revision does not match its artifact hashes');
             }
-            const audio = await writeArtifact(
-                directory,
-                PRACTICE_PACKAGE_AUDIO_FILENAME,
-                audioInput,
-            );
-            validateFileSize(audio, metadata.audio.bytes, 'audio artifact');
+            if (shareAudio) {
+                const shared = await writeOrReuseSharedAudio(metadata, audioInput);
+                createdSharedAudio = shared.created;
+            } else {
+                const audio = await writeArtifact(
+                    directory,
+                    PRACTICE_PACKAGE_AUDIO_FILENAME,
+                    audioInput,
+                );
+                validateFileSize(audio, metadata.audio.bytes, 'audio artifact');
+            }
             await runTransaction(
                 [PRACTICE_PACKAGE_METADATA_STORE],
                 'readwrite',
@@ -699,6 +850,9 @@ export function createPracticePackageStore({
         } catch (error) {
             await releaseUnusedStreams(suppliedArtifacts);
             if (shouldCleanup) await cleanupRevision(descriptor.metadata.revision);
+            if (createdSharedAudio) {
+                await cleanupUnreferencedSharedAudio(descriptor.metadata.audio.expectedSha256);
+            }
             if (error instanceof TypeError || error instanceof PracticePackageStoreError) {
                 throw error;
             }
@@ -706,8 +860,22 @@ export function createPracticePackageStore({
         }
     }
 
-    async function deletePackage(revision) {
+    function saveCompletePackage(manifest, artifacts, options = {}) {
+        return queueMutation(() => withAudioMutationLock(
+            () => saveCompletePackageMutation(manifest, artifacts, {
+                ...options,
+                shareAudio: true,
+            }),
+            () => saveCompletePackageMutation(manifest, artifacts, {
+                ...options,
+                shareAudio: false,
+            }),
+        ));
+    }
+
+    async function deletePackageMutation(revision, { cleanupSharedAudio }) {
         const key = requireSha256(revision, 'package revision');
+        const metadata = await readPackageMetadata(key);
         await runTransaction(
             [PRACTICE_PACKAGE_METADATA_STORE],
             'readwrite',
@@ -715,11 +883,31 @@ export function createPracticePackageStore({
                 PRACTICE_PACKAGE_METADATA_STORE,
             ).delete(key),
         );
+        let cleanupError = null;
         try {
             await removeRevisionDirectory(key);
         } catch (error) {
-            throw unavailable('Unable to delete practice-package artifacts', error);
+            cleanupError = error;
         }
+        if (cleanupSharedAudio && metadata) {
+            try {
+                if (await audioReferenceCount(metadata.audio.expectedSha256) === 0) {
+                    await removeSharedAudio(metadata.audio.expectedSha256);
+                }
+            } catch (error) {
+                cleanupError ||= error;
+            }
+        }
+        if (cleanupError) {
+            throw unavailable('Unable to delete practice-package artifacts', cleanupError);
+        }
+    }
+
+    function deletePackage(revision) {
+        return queueMutation(() => withAudioMutationLock(
+            () => deletePackageMutation(revision, { cleanupSharedAudio: true }),
+            () => deletePackageMutation(revision, { cleanupSharedAudio: false }),
+        ));
     }
 
     function close() {

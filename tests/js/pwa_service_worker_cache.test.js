@@ -11,7 +11,7 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v7';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v8';
 const RECOVERY_ASSETS = [
     '/static/v3/offline.html',
     '/static/v3/offline-catalog.js',

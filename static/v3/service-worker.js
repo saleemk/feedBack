@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'feedback-pwa-offline-';
-const CACHE_NAME = `${CACHE_PREFIX}v7`;
+const CACHE_NAME = `${CACHE_PREFIX}v8`;
 const OFFLINE_URL = '/static/v3/offline.html';
 const RECOVERY_ASSET_URLS = new Set([
   OFFLINE_URL,

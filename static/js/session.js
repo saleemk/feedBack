@@ -35,6 +35,7 @@
 // settings (#920): measure the writers before you reach for a container.
 
 import {
+    _defaultArrangement,
     loadSettings,
 } from './settings.js';
 import {
@@ -80,9 +81,13 @@ import {
 import {
     isOfflinePracticeActive,
     loadOfflinePracticePackage,
+    offlinePracticeMetadata,
+    replaceOfflinePracticeChart,
+    restoreOfflinePracticeChart,
     stopOfflinePracticePlayback,
 } from './offline-practice-player.js';
 import {
+    listCompletePracticePackages,
     readCompletePracticePackage,
 } from './practice-package-store.js';
 import {
@@ -217,6 +222,7 @@ export async function showScreen(id) {
         if (hadPlayableSong && !offlineActive) _snapshotResumeSession(stopTime);
         window.highway.stop();
         stopOfflinePracticePlayback();
+        _resetOfflinePracticeSiblings();
         // Cancel any queued seeks, in-flight shim closures, AND active
         // count-in timers before stopping playback so none of these paths
         // can mutate the torn-down session (mirrors the same triple reset
@@ -262,6 +268,50 @@ export async function showScreen(id) {
 }
 
 export let currentFilename = '';
+
+let _offlinePracticeSiblings = [];
+let _offlinePracticeSwitchGeneration = 0;
+
+function _normalizedOfflineFilename(value) {
+    if (typeof value !== 'string') return '';
+    try { return decodeURIComponent(value); } catch { return value; }
+}
+
+function _offlinePackageOrder(left, right) {
+    const indexDifference = left.arrangement.index - right.arrangement.index;
+    return indexDifference || String(left.revision).localeCompare(String(right.revision));
+}
+
+export function selectPreferredOfflinePracticePackage(packages, defaultArrangement = '') {
+    const ordered = (Array.isArray(packages) ? packages : []).slice().sort(_offlinePackageOrder);
+    if (!ordered.length) return null;
+    if (defaultArrangement) {
+        const preferred = ordered.find((metadata) => (
+            metadata.arrangement.smartName === defaultArrangement
+            || metadata.arrangement.name === defaultArrangement
+        ));
+        if (preferred) return preferred;
+    }
+    return ordered[0];
+}
+
+function _offlineSiblingsFor(metadata, packages) {
+    const filename = _normalizedOfflineFilename(metadata?.source?.filename);
+    const candidates = [...(Array.isArray(packages) ? packages : []), metadata];
+    const revisions = new Set();
+    return candidates.filter((entry) => {
+        if (!entry?.complete || !entry.revision || !Number.isInteger(entry.arrangement?.index)) return false;
+        if (_normalizedOfflineFilename(entry.source?.filename) !== filename) return false;
+        if (revisions.has(entry.revision)) return false;
+        revisions.add(entry.revision);
+        return true;
+    }).sort(_offlinePackageOrder);
+}
+
+function _resetOfflinePracticeSiblings() {
+    _offlinePracticeSwitchGeneration += 1;
+    _offlinePracticeSiblings = [];
+}
 
 export function _playbackApi() {
     return window.feedBack && window.feedBack.playback && window.feedBack.playback.version === 1
@@ -676,6 +726,7 @@ export async function playSong(filename, arrangement, options) {
 
     window.highway.stop();
     stopOfflinePracticePlayback();
+    _resetOfflinePracticeSiblings();
     // Cancel any active count-in: clear timers/RAF and bump the gen so
     // delayed callbacks (rewind frames, post-seek then, count-in ticks,
     // post-count play) bail before mutating the new session.
@@ -762,13 +813,27 @@ export async function playOfflinePracticePackage(revision, options = {}) {
     const readPackage = typeof options.readPackage === 'function'
         ? options.readPackage
         : readCompletePracticePackage;
-    const packageRecord = await readPackage(revision);
+    const listPackages = typeof options.listPackages === 'function'
+        ? options.listPackages
+        : listCompletePracticePackages;
+    let packageRecord = await readPackage(revision);
     if (!packageRecord) throw new Error('Offline practice bundle was not found');
     if (typeof window.highway?.loadOfflinePractice !== 'function') {
         throw new Error('Offline practice playback is unavailable');
     }
 
-    const metadata = packageRecord.metadata;
+    let metadata = packageRecord.metadata;
+    const siblings = _offlineSiblingsFor(metadata, await listPackages());
+    const preferred = selectPreferredOfflinePracticePackage(
+        siblings,
+        options.defaultArrangement === undefined ? _defaultArrangement : options.defaultArrangement,
+    );
+    if (!preferred) throw new Error('Offline practice bundle metadata is invalid');
+    if (preferred.revision !== metadata.revision) {
+        packageRecord = await readPackage(preferred.revision);
+        if (!packageRecord) throw new Error('Preferred offline arrangement was not found');
+        metadata = packageRecord.metadata;
+    }
     const filename = metadata.source?.filename || metadata.revision;
 
     if (artAbortController) artAbortController.abort();
@@ -776,6 +841,7 @@ export async function playOfflinePracticePackage(revision, options = {}) {
 
     window.highway.stop();
     stopOfflinePracticePlayback();
+    _resetOfflinePracticeSiblings();
     _cancelCountIn();
     _resetJuceAudioShimChain();
     _resetAudioSeekState();
@@ -803,6 +869,7 @@ export async function playOfflinePracticePackage(revision, options = {}) {
     S.lastAudioTime = 0;
 
     const offline = await loadOfflinePracticePackage(packageRecord, options);
+    _offlinePracticeSiblings = siblings;
 
     try {
         _clearAutoplayHold();
@@ -824,6 +891,7 @@ export async function playOfflinePracticePackage(revision, options = {}) {
         await window.highway.loadOfflinePractice(offline.messages, {
             metadata,
             duration: offline.duration,
+            siblings,
         });
         _resetSectionPracticeLog();
         _scheduleSectionPracticeRetries();
@@ -832,6 +900,7 @@ export async function playOfflinePracticePackage(revision, options = {}) {
         if (_minScaleSel && window.highway.getMinRenderScale) _minScaleSel.value = String(window.highway.getMinRenderScale());
     } catch (error) {
         stopOfflinePracticePlayback();
+        _resetOfflinePracticeSiblings();
         _pendingAutostart = false;
         S.pendingResume = null;
         S.isPlaying = false;
@@ -844,6 +913,49 @@ export async function playOfflinePracticePackage(revision, options = {}) {
         if (active && active.id === 'player') await showScreen(_playerOriginScreen || 'home');
         throw error;
     }
+}
+
+export async function switchOfflinePracticeArrangement(index, options = {}) {
+    if (!isOfflinePracticeActive()) throw new Error('Offline practice is not active');
+    const arrangementIndex = Number(index);
+    const target = _offlinePracticeSiblings.find((metadata) => metadata.arrangement.index === arrangementIndex);
+    if (!target) throw new Error('Stored offline arrangement was not found');
+    const activeMetadata = offlinePracticeMetadata();
+    if (activeMetadata?.revision === target.revision) return true;
+
+    const generation = ++_offlinePracticeSwitchGeneration;
+    const readPackage = typeof options.readPackage === 'function'
+        ? options.readPackage
+        : readCompletePracticePackage;
+    const packageRecord = await readPackage(target.revision);
+    if (generation !== _offlinePracticeSwitchGeneration) return false;
+    if (!packageRecord) throw new Error('Stored offline arrangement was not found');
+
+    const replacement = await replaceOfflinePracticeChart({
+        metadata: packageRecord.metadata,
+        chart: packageRecord.chart,
+    }, {
+        isCurrent: () => generation === _offlinePracticeSwitchGeneration,
+    });
+    if (!replacement) return false;
+    try {
+        const installed = await window.highway.replaceOfflinePractice(replacement.messages, {
+            metadata: replacement.metadata,
+            duration: replacement.duration,
+            siblings: _offlinePracticeSiblings,
+            isCurrent: () => generation === _offlinePracticeSwitchGeneration,
+        });
+        if (!installed) {
+            restoreOfflinePracticeChart(replacement.previous);
+            return false;
+        }
+    } catch (error) {
+        if (generation === _offlinePracticeSwitchGeneration) {
+            restoreOfflinePracticeChart(replacement.previous);
+        }
+        throw error;
+    }
+    return generation === _offlinePracticeSwitchGeneration;
 }
 
 // Leave the player and return to the screen the song was launched from

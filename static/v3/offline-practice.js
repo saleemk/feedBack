@@ -4,7 +4,10 @@ import {
     listCompletePracticePackages,
     openPracticePackageStore,
 } from '../js/practice-package-store.js';
-import { downloadPracticePackage } from '../js/practice-package-client.js';
+import {
+    downloadPracticePackage,
+    downloadPracticePackages,
+} from '../js/practice-package-client.js';
 import { playOfflinePracticePackage } from '../js/session.js';
 
 const TOOLBAR_ID = 'v3-songs-offline';
@@ -71,6 +74,7 @@ export function createOfflinePracticeController({
         close: closePracticePackageStore,
     },
     download = downloadPracticePackage,
+    downloadMany = downloadPracticePackages,
     launch = playOfflinePracticePackage,
     confirm = (options) => defaultConfirm(options, windowRef),
 } = {}) {
@@ -82,6 +86,7 @@ export function createOfflinePracticeController({
     let libraryWindowListener = null;
     let observer = null;
     let offlineFilenames = new Set();
+    const liveSongs = new Map();
 
     function toolbar() {
         return documentRef?.getElementById('v3-songs-toolbar');
@@ -93,7 +98,11 @@ export function createOfflinePracticeController({
 
     function updateCount() {
         const button = documentRef?.getElementById(TOOLBAR_ID);
-        if (button) button.textContent = `Offline (${packages.length})`;
+        if (!button) return;
+        const songs = new Set(packages.map((metadata) => (
+            decodeFilename(metadata?.source?.filename)
+        )).filter(Boolean));
+        button.textContent = `Offline (${songs.size})`;
     }
 
     function rebuildOfflineFilenames() {
@@ -112,14 +121,43 @@ export function createOfflinePracticeController({
         return !!filename && (offlineFilenames.has(filename) || offlineFilenames.has(decodeFilename(filename)));
     }
 
-    function packageForSong(song) {
+    function packagesForSong(song) {
         const filename = song?.filename;
-        if (!filename) return null;
+        if (!filename) return [];
         const decoded = decodeFilename(filename);
-        return packages.find((metadata) => {
+        return packages.filter((metadata) => {
             const stored = metadata?.source?.filename;
             return stored && (stored === filename || stored === decoded || decodeFilename(stored) === decoded);
-        }) || null;
+        });
+    }
+
+    function eligibleArrangements(song) {
+        if (!Array.isArray(song?.arrangements)) return [];
+        const seen = new Set();
+        return song.arrangements.reduce((eligible, arrangement) => {
+            const index = arrangement?.index;
+            if (!Number.isFinite(index) || !Number.isInteger(index) || seen.has(index)) return eligible;
+            seen.add(index);
+            eligible.push({
+                index,
+                name: typeof arrangement.name === 'string' && arrangement.name.trim()
+                    ? arrangement.name.trim()
+                    : null,
+            });
+            return eligible;
+        }, []);
+    }
+
+    function missingArrangements(song) {
+        const stored = new Set(packagesForSong(song).map((metadata) => (
+            metadata?.arrangement?.index
+        )).filter(Number.isInteger));
+        return eligibleArrangements(song).filter((arrangement) => !stored.has(arrangement.index));
+    }
+
+    function rememberSong(song) {
+        if (song?.filename) liveSongs.set(decodeFilename(song.filename), song);
+        return song;
     }
 
     function canUseOfflineActions(song) {
@@ -141,7 +179,18 @@ export function createOfflinePracticeController({
             }
             if (cardHasOfflinePackage(card)) {
                 badge.textContent = 'OFFLINE';
-                badge.title = 'Stored for offline practice';
+                const filename = card.getAttribute?.('data-fn');
+                const song = liveSongs.get(decodeFilename(filename));
+                const eligible = eligibleArrangements(song);
+                if (eligible.length) {
+                    const eligibleIndexes = new Set(eligible.map((arrangement) => arrangement.index));
+                    const storedIndexes = new Set(packagesForSong(song).map((metadata) => (
+                        metadata?.arrangement?.index
+                    )).filter((index) => eligibleIndexes.has(index)));
+                    badge.title = `${storedIndexes.size} of ${eligible.length} arrangements stored for offline practice`;
+                } else {
+                    badge.title = 'Stored for offline practice';
+                }
                 badge.className = String(badge.dataset.offlineOriginalClass || badge.className || '')
                     .replace(/\bbg-fb-primary\b/g, 'bg-amber-400')
                     .replace(/\btext-white\b/g, 'text-black');
@@ -260,8 +309,10 @@ export function createOfflinePracticeController({
     }
 
     async function openOfflineSong(song) {
-        const metadata = packageForSong(song);
-        if (!metadata || busy) return;
+        rememberSong(song);
+        const stored = packagesForSong(song);
+        if (!stored.length || busy) return;
+        const metadata = stored[0];
         busy = true;
         try {
             await launch(metadata.revision);
@@ -275,23 +326,32 @@ export function createOfflinePracticeController({
     }
 
     async function deleteOfflineSong(song) {
-        const metadata = packageForSong(song);
-        if (!metadata || busy) return;
+        rememberSong(song);
+        const stored = packagesForSong(song);
+        if (!stored.length || busy) return;
+        const label = packageLabel(stored[0]);
         const ok = await confirm({
-            title: 'Delete offline bundle?',
-            html: 'Delete the stored full mix and default chart for <strong>' +
-                esc(packageLabel(metadata)) + '</strong>?',
-            confirmText: 'Delete bundle',
+            title: stored.length === 1 ? 'Delete offline bundle?' : 'Delete offline arrangements?',
+            html: 'Delete ' + stored.length + ' stored offline ' +
+                (stored.length === 1 ? 'arrangement' : 'arrangements') + ' for <strong>' +
+                esc(label) + '</strong>?',
+            confirmText: stored.length === 1 ? 'Delete bundle' : 'Delete arrangements',
             danger: true,
         });
         if (!ok) return;
         busy = true;
+        let failure = null;
         try {
-            await store.deletePackage(metadata.revision);
-            await refresh();
-            notify(windowRef, 'Offline bundle deleted', packageLabel(metadata), '×');
-        } catch (error) {
-            notify(windowRef, 'Offline delete failed', error.message || String(error), '!', '#EF4444');
+            for (const metadata of stored) {
+                try { await store.deletePackage(metadata.revision); } catch (error) { failure ||= error; }
+            }
+            try { await refresh(); } catch (error) { failure ||= error; }
+            if (failure) {
+                notify(windowRef, stored.length === 1 ? 'Offline delete failed' : 'Offline delete incomplete',
+                    failure.message || String(failure), '!', '#EF4444');
+            } else {
+                notify(windowRef, stored.length === 1 ? 'Offline bundle deleted' : 'Offline arrangements deleted', label, '×');
+            }
         } finally { busy = false; }
     }
 
@@ -332,10 +392,13 @@ export function createOfflinePracticeController({
         return synchronizePackages();
     }
 
-    async function showPanel() {
+    async function showPanel(toggle = true) {
         await refresh();
         const current = documentRef.getElementById(PANEL_ID);
-        if (current) { closePanel(current); return; }
+        if (current) {
+            if (toggle) closePanel(current);
+            return;
+        }
         const target = toolbar();
         if (!target) return;
         target.insertAdjacentHTML('afterend', panelMarkup(await storageEstimate()));
@@ -345,22 +408,38 @@ export function createOfflinePracticeController({
 
     async function downloadSong(song) {
         if (!song?.filename || busy) return;
+        rememberSong(song);
         try {
             await ensureStorageReady();
         } catch (error) {
             notify(windowRef, 'Offline storage unavailable', error.message || String(error), '!', '#EF4444');
             return;
         }
-        const existing = packageForSong(song);
-        if (existing) {
-            notify(windowRef, 'Offline bundle already stored', packageLabel(existing));
+        const existing = packagesForSong(song);
+        const eligible = eligibleArrangements(song);
+        const missing = missingArrangements(song);
+        if (eligible.length && !missing.length) {
+            notify(windowRef, 'Offline arrangements already stored', packageLabel(existing[0]));
+            return;
+        }
+        if (!eligible.length && existing.length) {
+            notify(windowRef, 'Offline bundle already stored', packageLabel(existing[0]));
             return;
         }
         const label = packageLabel({ song: {
             artist: song.artist || 'Unknown artist',
             title: song.title || song.filename,
         }});
-        const ok = await confirm({
+        const batch = eligible.length > 0;
+        const arrangementNames = missing.map((arrangement) => arrangement.name).filter(Boolean);
+        const ok = await confirm(batch ? {
+            title: `Download ${missing.length} ${missing.length === 1 ? 'arrangement' : 'arrangements'} for offline practice?`,
+            html: 'Download <strong>' + esc(label) + '</strong> for later use?' +
+                (arrangementNames.length
+                    ? '<p class="mt-2 text-xs text-fb-textDim">' + esc(arrangementNames.join(', ')) + '</p>'
+                    : ''),
+            confirmText: 'Download',
+        } : {
             title: 'Download for offline practice?',
             html: 'Download <strong>' + esc(label) + '</strong> for later use?' +
                 '<p class="mt-2 text-xs text-fb-textDim">This stores the full mix and the default chart for offline practice.</p>',
@@ -369,13 +448,18 @@ export function createOfflinePracticeController({
         if (!ok) return;
         busy = true;
         try {
-            const metadata = await download({
+            const options = {
                 filename: song.filename,
                 baseHref: locationRef.href,
                 locationRef,
-            });
+            };
+            const result = batch
+                ? await downloadMany({ ...options, arrangementIndexes: missing.map((arrangement) => arrangement.index) })
+                : await download(options);
             await refresh();
-            notify(windowRef, 'Offline bundle stored', packageLabel(metadata));
+            const metadata = Array.isArray(result) ? result[0] : result;
+            notify(windowRef, batch ? 'Offline arrangements stored' : 'Offline bundle stored',
+                metadata ? packageLabel(metadata) : label);
         } catch (error) {
             notify(windowRef, 'Offline download failed', error.message || String(error), '!', '#EF4444');
         } finally { busy = false; }
@@ -392,7 +476,12 @@ export function createOfflinePracticeController({
                 icon: '↓',
                 placement: 'menu',
                 order: 35,
-                applies: (song) => canUseOfflineActions(song) && !packageForSong(song),
+                applies: (song) => {
+                    rememberSong(song);
+                    if (!canUseOfflineActions(song)) return false;
+                    const eligible = eligibleArrangements(song);
+                    return eligible.length ? missingArrangements(song).length > 0 : packagesForSong(song).length === 0;
+                },
                 enabled: () => !busy,
                 run: downloadSong,
             }),
@@ -403,7 +492,7 @@ export function createOfflinePracticeController({
                 icon: '▶',
                 placement: 'menu',
                 order: 35,
-                applies: (song) => canUseOfflineActions(song) && !!packageForSong(song),
+                applies: (song) => canUseOfflineActions(rememberSong(song)) && packagesForSong(song).length > 0,
                 enabled: () => !busy,
                 run: openOfflineSong,
             }),
@@ -415,7 +504,7 @@ export function createOfflinePracticeController({
                 placement: 'menu',
                 order: 36,
                 destructive: true,
-                applies: (song) => canUseOfflineActions(song) && !!packageForSong(song),
+                applies: (song) => canUseOfflineActions(rememberSong(song)) && packagesForSong(song).length > 0,
                 enabled: () => !busy,
                 run: deleteOfflineSong,
             }),

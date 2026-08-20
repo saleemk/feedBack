@@ -23,6 +23,11 @@ function requireMetadata(value) {
     return value;
 }
 
+function normalizedFilename(value) {
+    if (typeof value !== 'string') return '';
+    try { return decodeURIComponent(value); } catch { return value; }
+}
+
 export function parseOfflinePracticeChart(text) {
     const messages = [];
     const lines = String(text || '').split(/\r?\n/);
@@ -120,6 +125,41 @@ export async function loadOfflinePracticePackage(packageRecord, {
     };
 }
 
+export async function replaceOfflinePracticeChart(packageRecord, {
+    isCurrent = () => true,
+} = {}) {
+    const session = activeSession;
+    if (!session) throw new Error('Offline practice is not active');
+    const metadata = requireMetadata(packageRecord?.metadata);
+    const chart = requireBlob(packageRecord?.chart, 'Stored chart');
+    const activeFilename = normalizedFilename(session.metadata?.source?.filename);
+    const targetFilename = normalizedFilename(metadata?.source?.filename);
+    if (!activeFilename || !targetFilename || activeFilename !== targetFilename) {
+        throw new Error('Stored arrangement belongs to a different song');
+    }
+    const messages = parseOfflinePracticeChart(await chart.text());
+    if (!isCurrent()) return null;
+    const previous = {
+        metadata: session.metadata,
+        messages: session.messages,
+    };
+    session.metadata = metadata;
+    session.messages = messages;
+    return {
+        metadata,
+        messages,
+        duration: session.duration,
+        previous,
+    };
+}
+
+export function restoreOfflinePracticeChart(snapshot) {
+    if (!activeSession || !snapshot?.metadata || !Array.isArray(snapshot.messages)) return false;
+    activeSession.metadata = snapshot.metadata;
+    activeSession.messages = snapshot.messages;
+    return true;
+}
+
 export function stopOfflinePracticePlayback() {
     const session = activeSession;
     if (!session) return;
@@ -129,6 +169,10 @@ export function stopOfflinePracticePlayback() {
 
 export function isOfflinePracticeActive() {
     return Boolean(activeSession);
+}
+
+export function offlinePracticeMetadata() {
+    return activeSession?.metadata || null;
 }
 
 export function offlinePracticeCurrentTime() {

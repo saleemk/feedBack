@@ -15,13 +15,16 @@ async function loadModule() {
     return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64') + '#' + importSerial);
 }
 
-function packageRecord(chartText = '{"type":"song_info","title":"Song"}\n{"type":"ready"}\n') {
+function packageRecord(
+    chartText = '{"type":"song_info","title":"Song"}\n{"type":"ready"}\n',
+    { revision = 'a'.repeat(64), filename = 'Song.sloppak', index = 0, name = 'Lead' } = {},
+) {
     return {
         metadata: {
-            revision: 'a'.repeat(64),
-            source: { filename: 'Song.sloppak' },
+            revision,
+            source: { filename },
             song: { title: 'Song', artist: 'Artist', duration: 30 },
-            arrangement: { index: 0, name: 'Lead', smartName: 'Lead' },
+            arrangement: { index, name, smartName: name },
         },
         chart: new Blob([chartText], { type: 'application/x-ndjson' }),
         audio: new Blob([new Uint8Array([1, 2, 3])], { type: 'audio/ogg' }),
@@ -40,6 +43,7 @@ function fakeAudioContextClass({ duration = 30 } = {}) {
         }
 
         async decodeAudioData(buffer) {
+            this.decodeCalls = (this.decodeCalls || 0) + 1;
             this.decodedBytes = buffer.byteLength;
             return { duration };
         }
@@ -132,4 +136,89 @@ test('offline practice transport restarts an active source when seeking during p
     assert.equal(context.sources[0].stopped, true);
     assert.equal(context.sources[1].offset, 12);
     assert.equal(module.offlinePracticeCurrentTime(), 12);
+});
+
+test('chart replacement preserves decoded audio, position, playing state, and playback rate', async () => {
+    const module = await loadModule();
+    const FakeAudioContext = fakeAudioContextClass({ duration: 60 });
+    await module.loadOfflinePracticePackage(packageRecord(), { AudioContextClass: FakeAudioContext });
+    const context = FakeAudioContext.instances[0];
+    await module.playOfflinePractice();
+    context.currentTime = 8;
+    module.setOfflinePracticePlaybackRate(1.25);
+    context.currentTime = 10;
+    const source = context.sources.at(-1);
+    const position = module.offlinePracticeCurrentTime();
+
+    const replacement = await module.replaceOfflinePracticeChart(packageRecord(
+        '{"type":"song_info","title":"Song","arrangement_index":1}\n{"type":"notes","data":[{"t":1}]}\n{"type":"ready"}\n',
+        { revision: 'b'.repeat(64), index: 1, name: 'Rhythm' },
+    ));
+
+    assert.equal(replacement.metadata.arrangement.index, 1);
+    assert.equal(module.offlinePracticeMetadata().revision, 'b'.repeat(64));
+    assert.equal(context.decodeCalls, 1);
+    assert.equal(context.sources.at(-1), source);
+    assert.equal(source.stopped, undefined);
+    assert.equal(module.offlinePracticePlaybackRate(), 1.25);
+    assert.equal(module.offlinePracticeCurrentTime(), position);
+    module.pauseOfflinePractice();
+    const pausedAt = module.offlinePracticeCurrentTime();
+    await module.replaceOfflinePracticeChart(packageRecord(
+        '{"type":"song_info","title":"Song","arrangement_index":0}\n{"type":"ready"}\n',
+    ));
+    assert.equal(module.offlinePracticeCurrentTime(), pausedAt);
+    assert.equal(context.decodeCalls, 1);
+});
+
+test('invalid or wrong-song replacement leaves the prior offline chart active', async () => {
+    const module = await loadModule();
+    const FakeAudioContext = fakeAudioContextClass();
+    await module.loadOfflinePracticePackage(packageRecord(), { AudioContextClass: FakeAudioContext });
+
+    await assert.rejects(
+        module.replaceOfflinePracticeChart(packageRecord('not-json', {
+            revision: 'b'.repeat(64), index: 1, name: 'Rhythm',
+        })),
+        /line 1/,
+    );
+    assert.equal(module.offlinePracticeMetadata().revision, 'a'.repeat(64));
+
+    await assert.rejects(
+        module.replaceOfflinePracticeChart(packageRecord(undefined, {
+            revision: 'c'.repeat(64), filename: 'Other.sloppak', index: 1, name: 'Rhythm',
+        })),
+        /different song/,
+    );
+    assert.equal(module.offlinePracticeMetadata().revision, 'a'.repeat(64));
+    assert.equal(FakeAudioContext.instances[0].decodeCalls, 1);
+    assert.equal(await module.playOfflinePractice(), true);
+    assert.equal(FakeAudioContext.instances[0].sources.at(-1).started, true);
+});
+
+test('stale chart replacement cannot overwrite the latest requested chart', async () => {
+    const module = await loadModule();
+    const FakeAudioContext = fakeAudioContextClass();
+    await module.loadOfflinePracticePackage(packageRecord(), { AudioContextClass: FakeAudioContext });
+    let generation = 1;
+    let releaseSlow;
+    const slowChart = {
+        arrayBuffer: async () => new ArrayBuffer(0),
+        text: () => new Promise((resolve) => { releaseSlow = () => resolve(
+            '{"type":"song_info","title":"Song","arrangement_index":1}\n{"type":"ready"}\n',
+        ); }),
+    };
+    const slow = module.replaceOfflinePracticeChart({
+        ...packageRecord(undefined, { revision: 'b'.repeat(64), index: 1, name: 'Rhythm' }),
+        chart: slowChart,
+    }, { isCurrent: () => generation === 1 });
+    await Promise.resolve();
+    generation = 2;
+    await module.replaceOfflinePracticeChart(packageRecord(undefined, {
+        revision: 'c'.repeat(64), index: 2, name: 'Bass',
+    }), { isCurrent: () => generation === 2 });
+    releaseSlow();
+
+    assert.equal(await slow, null);
+    assert.equal(module.offlinePracticeMetadata().revision, 'c'.repeat(64));
 });

@@ -1579,17 +1579,40 @@ function createHighway() {
             : songInfo.arrangement;
     }
 
-    function _applyOfflineSongInfo(msg, metadata, duration) {
-        const songInfo = Object.assign({}, msg, {
+    function _offlineStoredArrangements(metadata, siblings = []) {
+        const storedArrangements = (Array.isArray(siblings) ? siblings : [])
+            .filter((entry) => Number.isInteger(entry?.arrangement?.index))
+            .slice()
+            .sort((left, right) => (
+                left.arrangement.index - right.arrangement.index
+                || String(left.revision).localeCompare(String(right.revision))
+            ));
+        if (!storedArrangements.some((entry) => entry.revision === metadata.revision)) {
+            storedArrangements.push(metadata);
+            storedArrangements.sort((left, right) => (
+                left.arrangement.index - right.arrangement.index
+                || String(left.revision).localeCompare(String(right.revision))
+            ));
+        }
+        return storedArrangements;
+    }
+
+    function _buildOfflineSongInfo(msg, metadata, duration, storedArrangements) {
+        return Object.assign({}, msg, {
             audio_url: null,
             duration: Number.isFinite(duration) ? duration : msg.duration,
             hasNotation: Boolean(msg.has_notation),
             hasDrumTab: Boolean(msg.has_drum_tab),
             offline: true,
+            arrangements: storedArrangements.map((entry) => ({
+                index: entry.arrangement.index,
+                name: entry.arrangement.name,
+                smart_name: entry.arrangement.smartName,
+            })),
         });
-        hwState.songInfo = songInfo;
-        hwState.songOffset = Number.isFinite(Number(songInfo.offset)) ? Number(songInfo.offset) : 0.0;
-        hwState.stringCount = _offlineStringCount(songInfo);
+    }
+
+    function _applyOfflineSongInfo(songInfo, metadata, storedArrangements) {
 
         const artistEl = document.getElementById('hud-artist');
         const titleEl = document.getElementById('hud-title');
@@ -1608,23 +1631,19 @@ function createHighway() {
 
         const sel = document.getElementById('arr-select');
         if (sel) {
-            const arrangement = {
-                index: metadata.arrangement?.index ?? songInfo.arrangement_index ?? 0,
-                name: metadata.arrangement?.name || songInfo.arrangement || 'Default',
-                smart_name: metadata.arrangement?.smartName || songInfo.arrangement_smart_name || '',
-                notes: Array.isArray(hwState.notes) ? hwState.notes.length : 0,
-            };
             sel.textContent = '';
-            const opt = document.createElement('option');
-            opt.value = arrangement.index;
-            opt.selected = true;
-            const displayName = songInfo.naming_mode === 'smart' && arrangement.smart_name
-                ? arrangement.smart_name
-                : arrangement.name;
-            opt.textContent = `${displayName} (${arrangement.notes ?? 0})`;
-            sel.appendChild(opt);
-            sel.value = String(arrangement.index);
-            sel.disabled = true;
+            storedArrangements.forEach((entry) => {
+                const arrangement = entry.arrangement;
+                const opt = document.createElement('option');
+                opt.value = arrangement.index;
+                opt.selected = entry.revision === metadata.revision;
+                opt.textContent = songInfo.naming_mode === 'smart' && arrangement.smartName
+                    ? arrangement.smartName
+                    : (arrangement.name || 'Default');
+                sel.appendChild(opt);
+            });
+            sel.value = String(metadata.arrangement?.index ?? songInfo.arrangement_index ?? 0);
+            sel.disabled = storedArrangements.length <= 1;
         }
         const dpSel = document.getElementById('drum-part-select');
         if (dpSel) {
@@ -1645,7 +1664,7 @@ function createHighway() {
                 arrangement: songInfo.arrangement,
                 arrangementSmartName: songInfo.arrangement_smart_name ?? null,
                 arrangementIndex: songInfo.arrangement_index,
-                arrangements: songInfo.arrangements || [],
+                arrangements: songInfo.arrangements,
                 tuning: songInfo.tuning,
                 capo: songInfo.capo,
                 format: 'offline-practice',
@@ -1653,7 +1672,158 @@ function createHighway() {
                 hasNotation: Boolean(songInfo.has_notation),
                 authors: [],
             };
-            window.feedBack.emit('song:loaded', window.feedBack.currentSong);
+        }
+    }
+
+    function _publishOfflineLifecycleEvents() {
+        if (!window.feedBack || typeof window.feedBack.emit !== 'function') return;
+        const events = [
+            ['song:loaded', window.feedBack.currentSong],
+            ['beats:loaded', { count: hwState.beats.length }],
+            ['song:ready', { hasPhraseData: api.hasPhraseData() }],
+        ];
+        for (const [name, detail] of events) {
+            try { window.feedBack.emit(name, detail); }
+            catch (_) { /* lifecycle observers must not invalidate an installed chart */ }
+        }
+    }
+
+    function _stageOfflinePracticeChart(messages, { metadata = {}, duration, siblings } = {}) {
+        if (!Array.isArray(messages) || !messages.length) throw new Error('Stored chart is empty');
+        const storedArrangements = _offlineStoredArrangements(metadata, siblings);
+        const chart = {
+            songInfo: null, songOffset: 0.0, stringCount: 6,
+            notes: [], chords: [], handShapes: [], beats: [], sections: [], anchors: [],
+            displayMaxFret: 12, chordTemplates: [], lyrics: [], lyricsSource: '',
+            toneChanges: [], toneBase: '', drumTab: null, phrases: null,
+            storedArrangements,
+        };
+        let sawReady = false;
+        for (const msg of messages) {
+            if (!msg || typeof msg.type !== 'string') {
+                throw new Error('Stored chart contains an invalid highway message');
+            }
+            switch (msg.type) {
+                case 'loading': break;
+                case 'song_info':
+                    chart.songInfo = _buildOfflineSongInfo(msg, metadata, duration, storedArrangements);
+                    chart.songOffset = Number.isFinite(Number(chart.songInfo.offset))
+                        ? Number(chart.songInfo.offset) : 0.0;
+                    chart.stringCount = _offlineStringCount(chart.songInfo);
+                    break;
+                case 'beats': chart.beats = Array.isArray(msg.data) ? msg.data : []; break;
+                case 'sections': chart.sections = Array.isArray(msg.data) ? msg.data : []; break;
+                case 'anchors':
+                    chart.anchors = Array.isArray(msg.data) ? msg.data : [];
+                    if (chart.anchors.length) {
+                        chart.displayMaxFret = Math.max(chart.anchors[0].fret + chart.anchors[0].width + 3, 8);
+                    }
+                    break;
+                case 'chord_templates': chart.chordTemplates = Array.isArray(msg.data) ? msg.data : []; break;
+                case 'lyrics':
+                    chart.lyrics = Array.isArray(msg.data) ? msg.data : [];
+                    chart.lyricsSource = msg.source || '';
+                    break;
+                case 'tone_changes':
+                    chart.toneChanges = Array.isArray(msg.data) ? msg.data : [];
+                    chart.toneBase = msg.base || '';
+                    break;
+                case 'notes': if (Array.isArray(msg.data)) chart.notes.push(...msg.data); break;
+                case 'chords': if (Array.isArray(msg.data)) chart.chords.push(...msg.data); break;
+                case 'handshapes': if (Array.isArray(msg.data)) chart.handShapes.push(...msg.data); break;
+                case 'drum_tab':
+                    chart.drumTab = {
+                        version: Number.isInteger(msg.version) ? msg.version : 1,
+                        name: (typeof msg.name === 'string' && msg.name) ? msg.name : 'Drums',
+                        kit: Array.isArray(msg.kit) ? msg.kit : [], hits: [],
+                        part_id: (typeof msg.part_id === 'string' && msg.part_id) ? msg.part_id : null,
+                    };
+                    break;
+                case 'drum_hits':
+                    if (chart.drumTab && Array.isArray(msg.data)) chart.drumTab.hits.push(...msg.data);
+                    break;
+                case 'phrases':
+                    if (chart.phrases === null) chart.phrases = [];
+                    if (Array.isArray(msg.data)) chart.phrases.push(...msg.data);
+                    break;
+                case 'ready': sawReady = true; break;
+            }
+        }
+        if (!chart.songInfo) throw new Error('Stored chart is missing song metadata');
+        if (!sawReady) throw new Error('Stored chart is incomplete');
+        chart.handShapes.sort((left, right) => left.start_time - right.start_time);
+        return chart;
+    }
+
+    function _snapshotOfflinePracticeChart() {
+        const fields = [
+            'songInfo', 'songOffset', 'stringCount', 'notes', 'chords', 'handShapes',
+            'beats', 'sections', 'anchors', 'displayMaxFret', 'chordTemplates',
+            'lyrics', 'lyricsSource', 'toneChanges', 'toneBase', 'drumTab', '_phrases',
+            'ready', '_filteredNotes', '_filteredChords', '_filteredAnchors',
+            '_filteredHandShapes', '_phrasesHaveHandShapes', '_xfNotes', '_xfChords',
+            '_xfAnchors', '_xfNotesAll', '_xfChordsAll', '_xfChordTemplates',
+            '_xfStringCount', '_xfTuning', '_xfCapo', '_xfHandShapes', '_xfCentOffset',
+            '_lastChordOnFretLine', '_chordFretLineNotes', '_chordRenderCacheSrc',
+            '_chordRenderCacheInverted', '_chordRenderCacheTemplates',
+        ];
+        const snapshot = { frameMismatchWarnings: [...hwState._frameMismatchWarned] };
+        for (const field of fields) snapshot[field] = hwState[field];
+        return snapshot;
+    }
+
+    function _restoreOfflinePracticeChart(snapshot) {
+        for (const [field, value] of Object.entries(snapshot)) {
+            if (field !== 'frameMismatchWarnings') hwState[field] = value;
+        }
+        hwState._frameMismatchWarned.clear();
+        for (const warning of snapshot.frameMismatchWarnings) hwState._frameMismatchWarned.add(warning);
+    }
+
+    function _installOfflinePracticeChart(chart) {
+        hwState.songInfo = chart.songInfo;
+        hwState.songOffset = chart.songOffset;
+        hwState.stringCount = chart.stringCount;
+        hwState.notes = chart.notes;
+        hwState.chords = chart.chords;
+        hwState.handShapes = chart.handShapes;
+        hwState.beats = chart.beats;
+        hwState.sections = chart.sections;
+        hwState.anchors = chart.anchors;
+        hwState.displayMaxFret = chart.displayMaxFret;
+        hwState.chordTemplates = chart.chordTemplates;
+        hwState.lyrics = chart.lyrics;
+        hwState.lyricsSource = chart.lyricsSource;
+        hwState.toneChanges = chart.toneChanges;
+        hwState.toneBase = chart.toneBase;
+        hwState.drumTab = chart.drumTab;
+        hwState._phrases = chart.phrases;
+        hwState.ready = false;
+        hwState._filteredNotes = null;
+        hwState._filteredChords = null;
+        hwState._filteredAnchors = null;
+        hwState._filteredHandShapes = null;
+        hwState._phrasesHaveHandShapes = false;
+        _clearChartTransformStage();
+        _resetChordRenderState();
+    }
+
+    async function _replaceOfflinePracticeChart(messages, options = {}) {
+        const chart = _stageOfflinePracticeChart(messages, options);
+        const isCurrent = typeof options.isCurrent === 'function' ? options.isCurrent : () => true;
+        if (!isCurrent()) return false;
+        const previous = _snapshotOfflinePracticeChart();
+        try {
+            _installOfflinePracticeChart(chart);
+            await _finishOfflineReady();
+            if (!isCurrent()) return false;
+            _applyOfflineSongInfo(chart.songInfo, options.metadata || {}, chart.storedArrangements);
+            _publishOfflineLifecycleEvents();
+            return true;
+        } catch (error) {
+            if (!isCurrent()) return false;
+            _restoreOfflinePracticeChart(previous);
+            throw error;
         }
     }
 
@@ -1665,11 +1835,14 @@ function createHighway() {
         _rebuildMasteryFilter();
         if (!hwState.animFrame) draw();
         if (api._onReady) await Promise.resolve(api._onReady()).catch((err) => console.error('[highway] _onReady error:', err));
-        if (window.feedBack) {
-            window.feedBack.emit('song:ready', {
-                hasPhraseData: api.hasPhraseData(),
-            });
-        }
+    }
+
+    async function _loadOfflinePracticeChart(messages, options = {}) {
+        hwState._wsGen += 1;
+        if (hwState.ws) { hwState.ws.close(); hwState.ws = null; }
+        hwState._juceRoutingPromise = Promise.resolve();
+        window._highwayJuceRoutingPending = false;
+        return _replaceOfflinePracticeChart(messages, options);
     }
 
     function _cloneChartTransformValue(value, seen = new WeakMap()) {
@@ -1814,86 +1987,12 @@ function createHighway() {
             _resetChordRenderState();
         },
 
-        async loadOfflinePractice(messages, { metadata, duration } = {}) {
-            if (!Array.isArray(messages) || !messages.length) {
-                throw new Error('Stored chart is empty');
-            }
-            hwState._wsGen += 1;
-            if (hwState.ws) { hwState.ws.close(); hwState.ws = null; }
-            hwState._juceRoutingPromise = Promise.resolve();
-            window._highwayJuceRoutingPending = false;
-            let sawSongInfo = false;
-            let sawReady = false;
-            for (const msg of messages) {
-                if (!msg || typeof msg.type !== 'string') {
-                    throw new Error('Stored chart contains an invalid highway message');
-                }
-                switch (msg.type) {
-                    case 'loading':
-                        break;
-                    case 'song_info':
-                        sawSongInfo = true;
-                        _applyOfflineSongInfo(msg, metadata || {}, duration);
-                        break;
-                    case 'beats':
-                        hwState.beats = Array.isArray(msg.data) ? msg.data : [];
-                        if (window.feedBack && typeof window.feedBack.emit === 'function') {
-                            window.feedBack.emit('beats:loaded', { count: hwState.beats.length });
-                        }
-                        break;
-                    case 'sections': hwState.sections = Array.isArray(msg.data) ? msg.data : []; break;
-                    case 'anchors':
-                        hwState.anchors = Array.isArray(msg.data) ? msg.data : [];
-                        if (hwState.anchors.length) {
-                            hwState.displayMaxFret = Math.max(hwState.anchors[0].fret + hwState.anchors[0].width + 3, 8);
-                        }
-                        break;
-                    case 'chord_templates': hwState.chordTemplates = Array.isArray(msg.data) ? msg.data : []; break;
-                    case 'lyrics':
-                        hwState.lyrics = Array.isArray(msg.data) ? msg.data : [];
-                        hwState.lyricsSource = msg.source || "";
-                        break;
-                    case 'tone_changes':
-                        hwState.toneChanges = Array.isArray(msg.data) ? msg.data : [];
-                        hwState.toneBase = msg.base || "";
-                        break;
-                    case 'notes':
-                        if (Array.isArray(msg.data)) hwState.notes = hwState.notes.concat(msg.data);
-                        break;
-                    case 'chords':
-                        if (Array.isArray(msg.data)) hwState.chords = hwState.chords.concat(msg.data);
-                        break;
-                    case 'handshapes':
-                        if (Array.isArray(msg.data)) hwState.handShapes = hwState.handShapes.concat(msg.data);
-                        break;
-                    case 'drum_tab':
-                        hwState.drumTab = {
-                            version: Number.isInteger(msg.version) ? msg.version : 1,
-                            name: (typeof msg.name === 'string' && msg.name) ? msg.name : 'Drums',
-                            kit: Array.isArray(msg.kit) ? msg.kit : [],
-                            hits: [],
-                            part_id: (typeof msg.part_id === 'string' && msg.part_id) ? msg.part_id : null,
-                        };
-                        break;
-                    case 'drum_hits':
-                        if (hwState.drumTab && Array.isArray(msg.data)) {
-                            Array.prototype.push.apply(hwState.drumTab.hits, msg.data);
-                        }
-                        break;
-                    case 'phrases':
-                        if (hwState._phrases === null) hwState._phrases = [];
-                        if (Array.isArray(msg.data)) {
-                            for (const phrase of msg.data) hwState._phrases.push(phrase);
-                        }
-                        break;
-                    case 'ready':
-                        sawReady = true;
-                        break;
-                }
-            }
-            if (!sawSongInfo) throw new Error('Stored chart is missing song metadata');
-            if (!sawReady) throw new Error('Stored chart is incomplete');
-            await _finishOfflineReady();
+        async loadOfflinePractice(messages, { metadata, duration, siblings } = {}) {
+            return _loadOfflinePracticeChart(messages, { metadata, duration, siblings });
+        },
+
+        async replaceOfflinePractice(messages, options = {}) {
+            return _replaceOfflinePracticeChart(messages, options);
         },
 
         resize() {

@@ -17,8 +17,9 @@ async function loadModule() {
             + 'const listCompletePracticePackages = async () => [];\n'
             + 'const openPracticePackageStore = async () => {};',
     ).replace(
-        /import \{ downloadPracticePackage \} from '\.\.\/js\/practice-package-client\.js';/,
-        'const downloadPracticePackage = async () => {};',
+        /import \{[\s\S]*?\} from '\.\.\/js\/practice-package-client\.js';/,
+        'const downloadPracticePackage = async () => {};\n'
+            + 'const downloadPracticePackages = async () => [];',
     ).replace(
         /import \{ playOfflinePracticePackage \} from '\.\.\/js\/session\.js';/,
         'const playOfflinePracticePackage = async () => {};',
@@ -27,12 +28,12 @@ async function loadModule() {
     return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64') + '#' + importSerial);
 }
 
-function metadata(revision = 'a'.repeat(64), filename = 'Song.sloppak') {
+function metadata(revision = 'a'.repeat(64), filename = 'Song.sloppak', arrangementIndex = 0, arrangementName = 'Lead') {
     return {
         revision,
         source: { filename },
         song: { artist: 'Artist', title: 'Song', duration: 42.5 },
-        arrangement: { name: 'Lead' },
+        arrangement: { index: arrangementIndex, name: arrangementName },
         chart: { bytes: 10 },
         audio: { bytes: 20 },
         storedAt: 1700000000000,
@@ -413,6 +414,268 @@ test('stored songs expose open/remove actions instead of download', async () => 
     assert.equal(deleteAction.applies(song), false);
 });
 
+test('multi-arrangement download filters live indexes, preserves order, deduplicates, and requests only missing packages', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const registrations = [];
+    const confirmations = [];
+    const batches = [];
+    let singleDownloads = 0;
+    let storedPackages = [metadata('1'.repeat(64), 'Song.sloppak', 2, 'Lead')];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } } },
+            fbNotify: { show() {} },
+        },
+        location: { href: 'https://feedback.test/' },
+        confirm: async (options) => { confirmations.push(options); return true; },
+        download: async () => { singleDownloads += 1; },
+        downloadMany: async (options) => {
+            batches.push(options);
+            storedPackages = [
+                ...storedPackages,
+                metadata('2'.repeat(64), 'Song.sloppak', 1, 'Rhythm'),
+                metadata('3'.repeat(64), 'Song.sloppak', 4, 'Arrangement 4'),
+            ];
+            return storedPackages.slice(1);
+        },
+        store: {
+            open: async () => {},
+            listPackages: async () => storedPackages,
+            close() {},
+        },
+    });
+    await controller.start();
+
+    const song = {
+        provider: 'local', filename: 'Song.sloppak', artist: 'Artist', title: 'Song',
+        arrangements: [
+            { index: 2, name: 'Lead' },
+            { name: 'Vocals' },
+            { index: 1, name: 'Rhythm' },
+            { index: 1, name: 'Duplicate rhythm' },
+            { index: Number.NaN, name: 'Invalid' },
+            { index: 4 },
+        ],
+    };
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    assert.equal(downloadAction.applies(song), true);
+
+    await downloadAction.run(song);
+
+    assert.equal(singleDownloads, 0);
+    assert.deepEqual(batches[0].arrangementIndexes, [1, 4]);
+    assert.equal(confirmations[0].title, 'Download 2 arrangements for offline practice?');
+    assert.match(confirmations[0].html, /Rhythm/);
+    assert.doesNotMatch(confirmations[0].html, /Lead|Vocals|Duplicate rhythm|default chart/);
+    assert.equal(downloadAction.applies(song), false);
+});
+
+test('songs without usable live indexes retain the single-package fallback without inferring names', async () => {
+    const module = await loadModule();
+    const registrations = [];
+    const single = [];
+    const batches = [];
+    const confirmations = [];
+    const controller = module.createOfflinePracticeController({
+        document: createDocument(),
+        window: { feedBack: { libraryCardActions: { register: (spec) => {
+            registrations.push(spec);
+            return () => {};
+        } } }, fbNotify: { show() {} } },
+        location: { href: 'https://feedback.test/' },
+        confirm: async (options) => { confirmations.push(options); return true; },
+        download: async (options) => { single.push(options); return metadata(); },
+        downloadMany: async (options) => { batches.push(options); return []; },
+        store: { open: async () => {}, listPackages: async () => [], close() {} },
+    });
+    await controller.start();
+    const song = {
+        provider: 'local', filename: 'Song.sloppak', artist: 'Artist', title: 'Song',
+        arrangements: [{ name: 'Lead' }, { index: 1.5, name: 'Rhythm' }, { index: Infinity, name: 'Bass' }],
+    };
+
+    await registrations.find((spec) => spec.id === 'offline-download').run(song);
+
+    assert.equal(single.length, 1);
+    assert.equal(batches.length, 0);
+    assert.match(confirmations[0].html, /default chart/);
+});
+
+test('toolbar counts unique normalized songs and badge title reports live arrangement coverage', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const registrations = [];
+    const card = document.element();
+    const badge = document.element();
+    badge.textContent = 'FEEDPAK';
+    badge.setAttribute('data-v3-format-badge', '');
+    card.setAttribute('data-fn', 'Encoded Song.sloppak');
+    card.appendChild(badge);
+    const storedPackages = [
+        metadata('4'.repeat(64), 'Encoded%20Song.sloppak', 0, 'Lead'),
+        metadata('5'.repeat(64), 'Encoded Song.sloppak', 2, 'Bass'),
+        metadata('6'.repeat(64), 'Other.sloppak', 0, 'Lead'),
+    ];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } }, on() {}, off() {} },
+            v3Songs: { visibleCards: () => [card] },
+        },
+        store: { open: async () => {}, listPackages: async () => storedPackages, close() {} },
+    });
+    await controller.start();
+    const song = {
+        provider: 'local', filename: 'Encoded Song.sloppak',
+        arrangements: [{ index: 0, name: 'Lead' }, { index: 1, name: 'Rhythm' }, { index: 2, name: 'Bass' }],
+    };
+    registrations.find((spec) => spec.id === 'offline-open').applies(song);
+    await controller.refresh();
+
+    assert.equal(document.getElementById('v3-songs-offline').textContent, 'Offline (2)');
+    assert.equal(badge.textContent, 'OFFLINE');
+    assert.equal(badge.title, '2 of 3 arrangements stored for offline practice');
+    assert.equal(registrations.find((spec) => spec.id === 'offline-download').applies(song), true);
+});
+
+test('Open offline delegates both single and multi-package songs to Core launch selection', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const registrations = [];
+    const launched = [];
+    let storedPackages = [metadata('7'.repeat(64), 'Song.sloppak', 0, 'Lead')];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: (spec) => {
+            registrations.push(spec);
+            return () => {};
+        } } }, fbNotify: { show() {} } },
+        launch: async (revision) => { launched.push(revision); },
+        store: { open: async () => {}, listPackages: async () => storedPackages, close() {} },
+    });
+    await controller.start();
+    const openAction = registrations.find((spec) => spec.id === 'offline-open');
+    const song = { provider: 'local', filename: 'Song.sloppak' };
+
+    await openAction.run(song);
+    assert.deepEqual(launched, ['7'.repeat(64)]);
+
+    storedPackages = [
+        ...storedPackages,
+        metadata('8'.repeat(64), 'Song.sloppak', 1, 'Rhythm'),
+    ];
+    await controller.refresh();
+    await openAction.run(song);
+
+    assert.deepEqual(launched, ['7'.repeat(64), '7'.repeat(64)]);
+    assert.equal(document.getElementById('v3-offline-panel'), null);
+});
+
+test('song-level removal deletes packages sequentially and refreshes after a partial failure', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const registrations = [];
+    const confirmations = [];
+    const notifications = [];
+    const deletionOrder = [];
+    const first = metadata('9'.repeat(64), 'Song.sloppak', 0, 'Lead');
+    const second = metadata('a'.repeat(64), 'Song.sloppak', 1, 'Rhythm');
+    let storedPackages = [first, second];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } } },
+            fbNotify: { show: (notice) => notifications.push(notice) },
+        },
+        confirm: async (options) => { confirmations.push(options); return true; },
+        store: {
+            open: async () => {},
+            listPackages: async () => storedPackages,
+            deletePackage: async (revision) => {
+                deletionOrder.push(revision);
+                if (revision === second.revision) throw new Error('delete blocked');
+                storedPackages = storedPackages.filter((entry) => entry.revision !== revision);
+            },
+            close() {},
+        },
+    });
+    await controller.start();
+    const song = { provider: 'local', filename: 'Song.sloppak' };
+
+    await registrations.find((spec) => spec.id === 'offline-delete').run(song);
+
+    assert.equal(confirmations.length, 1);
+    assert.match(confirmations[0].html, /2 stored offline arrangements/);
+    assert.deepEqual(deletionOrder, [first.revision, second.revision]);
+    assert.equal(document.getElementById('v3-songs-offline').textContent, 'Offline (1)');
+    assert.equal(notifications.at(-1).title, 'Offline delete incomplete');
+    assert.equal(notifications.at(-1).message, 'delete blocked');
+});
+
+test('successful song-level removal clears every arrangement and refreshes an open panel and actions', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const registrations = [];
+    const deleted = [];
+    let storedPackages = [
+        metadata('b'.repeat(64), 'Song.sloppak', 0, 'Lead'),
+        metadata('c'.repeat(64), 'Song.sloppak', 1, 'Rhythm'),
+    ];
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: {
+            feedBack: { libraryCardActions: { register: (spec) => {
+                registrations.push(spec);
+                return () => {};
+            } } },
+            fbNotify: { show() {} },
+        },
+        confirm: async () => true,
+        store: {
+            open: async () => {},
+            listPackages: async () => storedPackages,
+            deletePackage: async (revision) => {
+                deleted.push(revision);
+                storedPackages = storedPackages.filter((entry) => entry.revision !== revision);
+            },
+            close() {},
+        },
+    });
+    await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
+    const song = {
+        provider: 'local', filename: 'Song.sloppak',
+        arrangements: [{ index: 0, name: 'Lead' }, { index: 1, name: 'Rhythm' }],
+    };
+    const downloadAction = registrations.find((spec) => spec.id === 'offline-download');
+    const openAction = registrations.find((spec) => spec.id === 'offline-open');
+    const deleteAction = registrations.find((spec) => spec.id === 'offline-delete');
+
+    await deleteAction.run(song);
+
+    assert.deepEqual(deleted, ['b'.repeat(64), 'c'.repeat(64)]);
+    assert.equal(document.getElementById('v3-songs-offline').textContent, 'Offline (0)');
+    assert.match(document.getElementById('v3-offline-panel').innerHTML, /No offline downloads yet/);
+    assert.equal(downloadAction.applies(song), true);
+    assert.equal(openAction.applies(song), false);
+    assert.equal(deleteAction.applies(song), false);
+});
+
 test('offline toolbar control is bound from the Library root observer', async () => {
     const previousMutationObserver = globalThis.MutationObserver;
     const observed = [];
@@ -612,7 +875,7 @@ test('offline panel tolerates unavailable quota estimates', async () => {
 
 test('offline panel shows complete metadata, storage estimate, and explicit deletion', async () => {
     const source = fs.readFileSync(MODULE_PATH, 'utf8');
-    assert.match(source, /Offline \(\$\{packages\.length\}\)/);
+    assert.match(source, /Offline \(\$\{songs\.size\}\)/);
     assert.match(source, /metadata\.arrangement\.name/);
     assert.match(source, /navigatorRef\?\.storage/);
     assert.match(source, /data-offline-play/);

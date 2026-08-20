@@ -271,6 +271,7 @@ import {
     playOfflinePracticePackage,
     playSong,
     showScreen,
+    switchOfflinePracticeArrangement,
 } from './js/session.js';
 import {
     ShortcutPanel,
@@ -1203,12 +1204,62 @@ async function changeArrangement(index, drumPart) {
                 ? window.highway.getSongInfo()
                 : null;
             const arrSel = document.getElementById('arr-select');
-            if (arrSel && songInfo && Number.isFinite(Number(songInfo.arrangement_index))) {
-                arrSel.value = String(songInfo.arrangement_index);
-            }
+            const activeIndex = Number(songInfo?.arrangement_index);
             const dpSel = document.getElementById('drum-part-select');
-            if (dpSel && songInfo?.offline) {
-                dpSel.value = '';
+            if (dpSel) dpSel.value = '';
+            if (drumPart !== undefined || !Number.isInteger(Number(index))) {
+                if (arrSel && Number.isFinite(activeIndex)) arrSel.value = String(activeIndex);
+                return;
+            }
+            if (Number(index) === activeIndex) return;
+
+            const myGen = ++_arrBusyGen;
+            const playBtn = document.getElementById('btn-play');
+            if (playBtn) playBtn.setAttribute('aria-busy', 'true');
+            let overlay = document.getElementById('arr-loading');
+            if (overlay) overlay.remove();
+            overlay = document.createElement('div');
+            overlay.id = 'arr-loading';
+            overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm';
+            overlay.innerHTML = `
+                <div class="bg-dark-700 border border-gray-700 rounded-2xl p-6 w-72 text-center shadow-2xl">
+                    <div class="text-sm text-gray-300 mb-3">Loading arrangement...</div>
+                    <div class="progress-bar"><div class="fill" style="width:30%;animation:pulse 1s infinite"></div></div>
+                </div>`;
+            document.body.appendChild(overlay);
+            window.feedBack.emit('song:arrangement-changed', {
+                filename: currentFilename,
+                arrangement: Number(index),
+            });
+            _hideSectionPracticeBar();
+            _resetSectionPracticeLog();
+            invalidateParentCount();
+            try {
+                const changed = await switchOfflinePracticeArrangement(Number(index));
+                if (changed && myGen === _arrBusyGen) {
+                    window.feedBack.emit('arrangement:changed', {
+                        index: Number(index),
+                        filename: currentFilename,
+                        offline: true,
+                    });
+                }
+            } catch (error) {
+                if (myGen === _arrBusyGen) {
+                    if (arrSel && Number.isFinite(activeIndex)) arrSel.value = String(activeIndex);
+                    try {
+                        window.fbNotify?.show({
+                            title: 'Offline arrangement unavailable',
+                            message: error.message || String(error),
+                            icon: '!',
+                            accent: '#EF4444',
+                        });
+                    } catch (_) {}
+                }
+            } finally {
+                if (myGen === _arrBusyGen) {
+                    document.getElementById('arr-loading')?.remove();
+                    document.getElementById('btn-play')?.removeAttribute('aria-busy');
+                }
             }
             return;
         }

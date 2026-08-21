@@ -11,14 +11,14 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v8';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v9';
 const RECOVERY_ASSETS = [
     '/static/v3/offline.html',
     '/static/v3/offline-catalog.js',
     '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v7';
-const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v6';
+const SHELL_CACHE = 'feedback-pwa-shell-v8';
+const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v7';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -288,8 +288,8 @@ test('successful install publishes one complete shell candidate', async () => {
     assert.equal(shellPuts.at(-1).url, SHELL_MARKER);
 });
 
-test('v7 upgrade replaces v6 only after a complete candidate activates', async (t) => {
-    await t.test('successful install builds v7 while preserving complete v6', async () => {
+test('v8 upgrade replaces v7 only after a complete candidate activates', async (t) => {
+    await t.test('successful install builds v8 while preserving complete v7', async () => {
         const configured = successfulResponses();
         const harness = createHarness({
             responses: configured.responses,
@@ -308,7 +308,7 @@ test('v7 upgrade replaces v6 only after a complete candidate activates', async (
         );
     });
 
-    await t.test('failed v7 install preserves complete v6', async () => {
+    await t.test('failed v8 install preserves complete v7', async () => {
         const configured = successfulResponses();
         configured.responses['/static/app.js'] = new FakeResponse('failed', { status: 503 });
         const harness = createHarness({
@@ -324,7 +324,7 @@ test('v7 upgrade replaces v6 only after a complete candidate activates', async (
         assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
     });
 
-    await t.test('activation preserves v6 until v7 is complete', async () => {
+    await t.test('activation preserves v7 until v8 is complete', async () => {
         for (const currentEntries of [{}, { '/static/app.js': new FakeResponse('partial') }]) {
             const incomplete = createHarness({
                 seedCaches: {

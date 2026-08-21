@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'feedback-pwa-offline-';
-const CACHE_NAME = `${CACHE_PREFIX}v8`;
+const CACHE_NAME = `${CACHE_PREFIX}v9`;
 const OFFLINE_URL = '/static/v3/offline.html';
 const RECOVERY_ASSET_URLS = new Set([
   OFFLINE_URL,
@@ -7,7 +7,7 @@ const RECOVERY_ASSET_URLS = new Set([
   '/static/js/practice-package-store.js',
 ]);
 const SHELL_CACHE_PREFIX = 'feedback-pwa-shell-';
-const SHELL_CACHE_VERSION = 'v7';
+const SHELL_CACHE_VERSION = 'v8';
 const SHELL_CACHE_NAME = `${SHELL_CACHE_PREFIX}${SHELL_CACHE_VERSION}`;
 const SHELL_MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';

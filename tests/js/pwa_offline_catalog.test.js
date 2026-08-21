@@ -71,12 +71,16 @@ function createDocument() {
     };
 }
 
-function metadata(revision, { title = 'Stored Song', artist = 'Stored Artist' } = {}) {
+function metadata(revision, {
+    title = 'Stored Song', artist = 'Stored Artist', filename = `${title}.sloppak`,
+    arrangementIndex = 0, arrangementName = 'Lead', complete = true,
+} = {}) {
     return {
         revision,
-        source: { filename: `${title}.sloppak` },
+        complete,
+        source: { filename },
         song: { title, artist },
-        arrangement: { name: 'Lead' },
+        arrangement: { index: arrangementIndex, name: arrangementName },
         chart: { bytes: 1024 },
         audio: { bytes: 4 * 1024 * 1024 },
     };
@@ -92,13 +96,13 @@ test('recovery document is package-only and Retry remains independent', () => {
     assert.doesNotMatch(html, /\/static\/highway\.js|device-catalog/);
 });
 
-test('complete packages render with count, sizes, Open, and Delete', async () => {
+test('complete packages render as logical songs with count, sizes, Open, and Delete', async () => {
     const module = await loadModule();
     const document = createDocument();
     const opened = [];
     const packages = [
         metadata(REVISION_A),
-        metadata(REVISION_B, { title: 'Second', artist: 'Another' }),
+        metadata(REVISION_B, { title: 'Second', artist: 'Another', filename: 'Z Second.sloppak' }),
     ];
     const controller = module.createOfflineCatalog({
         document,
@@ -111,16 +115,49 @@ test('complete packages render with count, sizes, Open, and Delete', async () =>
     assert.equal(await controller.start(), true);
     assert.equal(document.elements.get('offline-package-manager').hidden, false);
     assert.equal(document.elements.get('offline-storage-loading').hidden, true);
-    assert.equal(document.elements.get('offline-package-count').textContent, '2 downloads');
+    assert.equal(document.elements.get('offline-package-count').textContent, '2 offline songs');
     assert.match(document.elements.get('offline-storage-usage').textContent, /8\.0 MB downloaded/);
     assert.match(document.elements.get('offline-storage-usage').textContent, /20 MB of 100 MB device storage used/);
     const rows = document.elements.get('offline-package-list').children;
     assert.equal(rows.length, 2);
     assert.equal(rows[0].children[0].children[0].textContent, 'Stored Artist - Stored Song');
-    assert.match(rows[0].children[0].children[1].textContent, /Lead · 4\.0 MB/);
+    assert.match(rows[0].children[0].children[1].textContent, /1 stored arrangement · 4\.0 MB/);
     assert.equal(rows[0].children[1].children[0].getAttribute('data-offline-open'), REVISION_A);
     assert.equal(rows[0].children[1].children[1].getAttribute('data-offline-delete'), REVISION_A);
 
+    await rows[0].children[1].children[0].dispatch('click');
+    assert.deepEqual(opened, [REVISION_A]);
+});
+
+test('recovery groups decoded filenames with deterministic song, arrangement, and seed ordering', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const opened = [];
+    const revisionC = 'c'.repeat(64);
+    const revisionD = 'd'.repeat(64);
+    const packages = [
+        metadata(REVISION_B, { filename: 'Encoded%20Song.sloppak', arrangementIndex: 2, arrangementName: 'Bass' }),
+        metadata(revisionC, { filename: 'Encoded Song.sloppak', arrangementIndex: 1, arrangementName: 'Rhythm' }),
+        metadata(REVISION_A, { filename: 'Encoded Song.sloppak', arrangementIndex: 1, arrangementName: 'Rhythm alt' }),
+        metadata(revisionD, { filename: 'Other.sloppak', title: 'Stored Song', artist: 'Stored Artist' }),
+        metadata('e'.repeat(64), { filename: 'Encoded Song.sloppak', arrangementIndex: 0, complete: false }),
+    ];
+    const controller = module.createOfflineCatalog({
+        document,
+        openPackageStore: async () => {},
+        listPackages: async () => packages,
+        openPackage: async (revision) => { opened.push(revision); },
+        estimateStorage: async () => null,
+    });
+
+    await controller.start();
+
+    const rows = document.elements.get('offline-package-list').children;
+    assert.equal(document.elements.get('offline-package-count').textContent, '2 offline songs');
+    assert.equal(rows.length, 2);
+    assert.match(rows[0].children[0].children[1].textContent, /3 stored arrangements · 12 MB/);
+    assert.equal(rows[0].children[1].children[0].getAttribute('data-offline-open'), REVISION_A);
+    assert.equal(rows[1].children[1].children[0].getAttribute('data-offline-open'), revisionD);
     await rows[0].children[1].children[0].dispatch('click');
     assert.deepEqual(opened, [REVISION_A]);
 });
@@ -158,7 +195,7 @@ test('empty package storage shows a useful empty state', async () => {
     });
 
     assert.equal(await controller.start(), true);
-    assert.equal(document.elements.get('offline-package-count').textContent, '0 downloads');
+    assert.equal(document.elements.get('offline-package-count').textContent, '0 offline songs');
     assert.equal(document.elements.get('offline-package-empty').hidden, false);
     assert.equal(document.elements.get('offline-storage-usage').textContent, '0 B downloaded');
 });
@@ -202,8 +239,42 @@ test('Delete requires confirmation and refreshes the package list', async () => 
 
     assert.deepEqual(confirmations, ['Stored Artist - Stored Song']);
     assert.deepEqual(deleted, [REVISION_A]);
-    assert.equal(document.elements.get('offline-package-count').textContent, '0 downloads');
+    assert.equal(document.elements.get('offline-package-count').textContent, '0 offline songs');
     assert.equal(document.elements.get('offline-package-empty').hidden, false);
+});
+
+test('group Delete removes revisions sequentially and keeps survivors visible after partial failure', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    const first = metadata(REVISION_A, { filename: 'Song.sloppak', arrangementIndex: 0 });
+    const second = metadata(REVISION_B, { filename: 'Song.sloppak', arrangementIndex: 1, arrangementName: 'Rhythm' });
+    let packages = [second, first];
+    const deleted = [];
+    const confirmations = [];
+    const controller = module.createOfflineCatalog({
+        document,
+        openPackageStore: async () => {},
+        listPackages: async () => packages,
+        deletePackage: async (revision) => {
+            deleted.push(revision);
+            if (revision === REVISION_B) throw new Error('delete blocked');
+            packages = packages.filter((metadata) => metadata.revision !== revision);
+        },
+        confirmDelete: (label, count) => { confirmations.push([label, count]); return true; },
+        estimateStorage: async () => null,
+    });
+    await controller.start();
+
+    await document.elements.get('offline-package-list').children[0]
+        .children[1].children[1].dispatch('click');
+
+    assert.deepEqual(confirmations, [['Stored Artist - Stored Song', 2]]);
+    assert.deepEqual(deleted, [REVISION_A, REVISION_B]);
+    assert.equal(document.elements.get('offline-package-count').textContent, '1 offline song');
+    assert.equal(document.elements.get('offline-package-list').children.length, 1);
+    assert.match(document.elements.get('offline-package-list').children[0]
+        .children[0].children[1].textContent, /1 stored arrangement/);
+    assert.match(document.elements.get('offline-storage-error').textContent, /delete blocked/);
 });
 
 test('cancelled or failed deletion preserves the downloaded package', async () => {

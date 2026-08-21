@@ -31,6 +31,7 @@ async function loadModule() {
 function metadata(revision = 'a'.repeat(64), filename = 'Song.sloppak', arrangementIndex = 0, arrangementName = 'Lead') {
     return {
         revision,
+        complete: true,
         source: { filename },
         song: { artist: 'Artist', title: 'Song', duration: 42.5 },
         arrangement: { index: arrangementIndex, name: arrangementName },
@@ -581,6 +582,53 @@ test('Open offline delegates both single and multi-package songs to Core launch 
     assert.equal(document.getElementById('v3-offline-panel'), null);
 });
 
+test('group busy state suppresses repeated Open and Delete taps for the same song', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const registrations = [];
+    const launched = [];
+    const confirmations = [];
+    let releaseLaunch;
+    let releaseConfirm;
+    const launchGate = new Promise((resolve) => { releaseLaunch = resolve; });
+    const confirmGate = new Promise((resolve) => { releaseConfirm = resolve; });
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: (spec) => {
+            registrations.push(spec);
+            return () => {};
+        } } }, fbNotify: { show() {} } },
+        launch: async (revision) => { launched.push(revision); await launchGate; },
+        confirm: async (options) => { confirmations.push(options); return confirmGate; },
+        store: {
+            open: async () => {},
+            listPackages: async () => [metadata('8'.repeat(64), 'Song.sloppak')],
+            deletePackage: async () => assert.fail('cancelled delete must not run'),
+            close() {},
+        },
+    });
+    await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
+    const song = { provider: 'local', filename: 'Song.sloppak' };
+    const openAction = registrations.find((spec) => spec.id === 'offline-open');
+    const deleteAction = registrations.find((spec) => spec.id === 'offline-delete');
+
+    const firstOpen = openAction.run(song);
+    await Promise.resolve();
+    const repeatedOpen = openAction.run(song);
+    assert.equal(launched.length, 1);
+    releaseLaunch();
+    await Promise.all([firstOpen, repeatedOpen]);
+
+    const firstDelete = deleteAction.run(song);
+    await Promise.resolve();
+    const repeatedDelete = deleteAction.run(song);
+    assert.equal(confirmations.length, 1);
+    releaseConfirm(false);
+    await Promise.all([firstDelete, repeatedDelete]);
+});
+
 test('song-level removal deletes packages sequentially and refreshes after a partial failure', async () => {
     const module = await loadModule();
     const document = createDocument();
@@ -614,6 +662,7 @@ test('song-level removal deletes packages sequentially and refreshes after a par
         },
     });
     await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
     const song = { provider: 'local', filename: 'Song.sloppak' };
 
     await registrations.find((spec) => spec.id === 'offline-delete').run(song);
@@ -624,6 +673,8 @@ test('song-level removal deletes packages sequentially and refreshes after a par
     assert.equal(document.getElementById('v3-songs-offline').textContent, 'Offline (1)');
     assert.equal(notifications.at(-1).title, 'Offline delete incomplete');
     assert.equal(notifications.at(-1).message, 'delete blocked');
+    assert.match(document.getElementById('v3-offline-panel').innerHTML, /1 stored arrangement/);
+    assert.match(document.getElementById('v3-offline-panel').innerHTML, new RegExp(second.revision));
 });
 
 test('successful song-level removal clears every arrangement and refreshes an open panel and actions', async () => {
@@ -838,13 +889,42 @@ test('offline panel renders compact summary, quota bar, and Open action', async 
 
     const panel = document.getElementById('v3-offline-panel');
     assert.ok(panel);
-    assert.match(panel.innerHTML, /1 download · 3\.0 MiB used/);
+    assert.match(panel.innerHTML, /1 offline song · 3\.0 MiB used/);
+    assert.match(panel.innerHTML, /1 stored arrangement · 3\.0 MiB/);
     assert.match(panel.innerHTML, /role="meter"/);
     assert.match(panel.innerHTML, /Storage usage: 1 B used \/ 1000 B quota \(0\.1%\)/);
     assert.match(panel.innerHTML, /style="width:5\.0%"/);
     assert.match(panel.innerHTML, />Open<\/button>/);
     assert.doesNotMatch(panel.innerHTML, />Practice<\/button>/);
     assert.match(panel.innerHTML, /class="hidden sm:inline"/);
+});
+
+test('offline panel groups normalized filenames while identical labels from different files stay separate', async () => {
+    const module = await loadModule();
+    const document = createDocument();
+    document.element('v3-songs-toolbar');
+    const seed = metadata('1'.repeat(64), 'Encoded Song.sloppak', 0, 'Lead');
+    const sibling = metadata('2'.repeat(64), 'Encoded%20Song.sloppak', 1, 'Rhythm');
+    const other = metadata('3'.repeat(64), 'Other.sloppak', 0, 'Lead');
+    const controller = module.createOfflinePracticeController({
+        document,
+        window: { feedBack: { libraryCardActions: { register: () => () => {} } } },
+        store: {
+            open: async () => {},
+            listPackages: async () => [sibling, other, seed],
+            close() {},
+        },
+    });
+
+    await controller.start();
+    await document.getElementById('v3-songs-offline').listeners.get('click')();
+
+    const html = document.getElementById('v3-offline-panel').innerHTML;
+    assert.match(html, /2 offline songs/);
+    assert.match(html, /2 stored arrangements/);
+    assert.equal((html.match(/data-offline-play=/g) || []).length, 2);
+    assert.match(html, new RegExp(`data-offline-play="${seed.revision}"`));
+    assert.match(html, new RegExp(`data-offline-play="${other.revision}"`));
 });
 
 test('offline panel tolerates unavailable quota estimates', async () => {
@@ -867,23 +947,24 @@ test('offline panel tolerates unavailable quota estimates', async () => {
 
     const panel = document.getElementById('v3-offline-panel');
     assert.ok(panel);
-    assert.match(panel.innerHTML, /0 downloads · 0 B used/);
+    assert.match(panel.innerHTML, /0 offline songs · 0 B used/);
     assert.match(panel.innerHTML, /No offline downloads yet/);
     assert.doesNotMatch(panel.innerHTML, /role="meter"/);
     assert.doesNotMatch(panel.innerHTML, /Unavailable/);
 });
 
-test('offline panel shows complete metadata, storage estimate, and explicit deletion', async () => {
+test('offline panel shows grouped metadata, storage estimate, and group deletion', async () => {
     const source = fs.readFileSync(MODULE_PATH, 'utf8');
-    assert.match(source, /Offline \(\$\{songs\.size\}\)/);
-    assert.match(source, /metadata\.arrangement\.name/);
+    assert.match(source, /Offline \(\$\{groupCompletePackages\(packages\)\.length\}\)/);
+    assert.match(source, /groupCompletePackages\(packages\)/);
+    assert.match(source, /stored.*arrangement/);
     assert.match(source, /navigatorRef\?\.storage/);
     assert.match(source, /data-offline-play/);
-    assert.match(source, /await launch\(revision\)/);
+    assert.match(source, /await launch\(metadata\.revision\)/);
     assert.match(source, /Offline launch failed/);
     assert.match(source, /data-offline-delete/);
     assert.match(source, /Delete offline bundle\?/);
-    assert.match(source, /await store\.deletePackage\(revision\)/);
+    assert.match(source, /await store\.deletePackage\(metadata\.revision\)/);
     assert.match(source, /await refresh\(\)/);
     assert.match(source, />Open<\/button>/);
     assert.match(source, /role="meter"/);

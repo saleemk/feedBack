@@ -28,12 +28,49 @@ function packageBytes(metadata) {
     return Number(metadata?.chart?.bytes || 0) + Number(metadata?.audio?.bytes || 0);
 }
 
+function normalizedFilename(value) {
+    if (typeof value !== 'string') return '';
+    try { return decodeURIComponent(value); } catch { return value; }
+}
+
+function compareText(left, right) {
+    const a = String(left);
+    const b = String(right);
+    return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function comparePackages(left, right) {
+    return left.arrangement.index - right.arrangement.index
+        || compareText(left.revision, right.revision);
+}
+
+function groupCompletePackages(packages) {
+    const byFilename = new Map();
+    for (const metadata of Array.isArray(packages) ? packages : []) {
+        const filename = normalizedFilename(metadata?.source?.filename);
+        if (!metadata?.complete || !filename || !metadata.revision
+                || !Number.isInteger(metadata.arrangement?.index)) continue;
+        if (!byFilename.has(filename)) byFilename.set(filename, []);
+        byFilename.get(filename).push(metadata);
+    }
+    return Array.from(byFilename, ([filename, entries]) => {
+        entries.sort(comparePackages);
+        return {
+            filename,
+            packages: entries,
+            metadata: entries[0],
+            bytes: entries.reduce((total, metadata) => total + packageBytes(metadata), 0),
+        };
+    }).sort((left, right) => compareText(left.filename, right.filename));
+}
+
 function defaultOpenPackage(revision) {
     globalThis.location.assign(`/v3/?offline=1&revision=${encodeURIComponent(revision)}`);
 }
 
-function defaultConfirmDelete(label) {
-    return globalThis.confirm(`Delete ${label} from this device?`);
+function defaultConfirmDelete(label, count) {
+    const subject = count === 1 ? label : `${label} and its ${count} stored arrangements`;
+    return globalThis.confirm(`Delete ${subject} from this device?`);
 }
 
 async function defaultStorageEstimate() {
@@ -51,8 +88,8 @@ export function createOfflineCatalog({
     estimateStorage = defaultStorageEstimate,
 } = {}) {
     let startPromise = null;
-    let packages = [];
-    let busyRevision = null;
+    let groups = [];
+    const busyGroups = new Set();
 
     function element(id) {
         const target = documentRef?.getElementById(id);
@@ -67,9 +104,7 @@ export function createOfflineCatalog({
     }
 
     function setStorageSummary(estimate = null) {
-        const downloadedBytes = packages.reduce((total, metadata) => (
-            total + packageBytes(metadata)
-        ), 0);
+        const downloadedBytes = groups.reduce((total, group) => total + group.bytes, 0);
         let summary = `${formatBytes(downloadedBytes)} downloaded`;
         if (Number.isFinite(estimate?.usage) && Number.isFinite(estimate?.quota)
                 && estimate.quota > 0) {
@@ -83,8 +118,10 @@ export function createOfflineCatalog({
         const empty = element('offline-package-empty');
         list.replaceChildren();
 
-        for (const metadata of packages) {
-            const revision = metadata?.revision;
+        for (const group of groups) {
+            const metadata = group.metadata;
+            const revision = metadata.revision;
+            const isBusy = busyGroups.has(group.filename);
             const row = documentRef.createElement('li');
             row.className = 'package-row';
 
@@ -95,7 +132,8 @@ export function createOfflineCatalog({
             title.textContent = packageLabel(metadata);
             const meta = documentRef.createElement('span');
             meta.className = 'package-meta';
-            meta.textContent = `${metadata?.arrangement?.name || 'Default chart'} · ${formatBytes(packageBytes(metadata))}`;
+            const arrangementCount = group.packages.length;
+            meta.textContent = `${arrangementCount} stored ${arrangementCount === 1 ? 'arrangement' : 'arrangements'} · ${formatBytes(group.bytes)}`;
             details.append(title, meta);
 
             const actions = documentRef.createElement('div');
@@ -103,26 +141,24 @@ export function createOfflineCatalog({
             const openButton = documentRef.createElement('button');
             openButton.type = 'button';
             openButton.className = 'primary';
-            openButton.textContent = 'Open';
-            openButton.disabled = Boolean(busyRevision) || !revision;
+            openButton.textContent = isBusy ? 'Opening...' : 'Open';
+            openButton.disabled = isBusy || !revision;
             if (revision) openButton.setAttribute('data-offline-open', revision);
-            openButton.addEventListener('click', () => {
-                if (revision && !busyRevision) openPackage(revision);
-            });
+            openButton.addEventListener('click', () => openGroup(group));
             const deleteButton = documentRef.createElement('button');
             deleteButton.type = 'button';
             deleteButton.className = 'secondary danger';
-            deleteButton.textContent = busyRevision === revision ? 'Deleting...' : 'Delete';
-            deleteButton.disabled = Boolean(busyRevision) || !revision;
+            deleteButton.textContent = isBusy ? 'Deleting...' : 'Delete';
+            deleteButton.disabled = isBusy || !revision;
             if (revision) deleteButton.setAttribute('data-offline-delete', revision);
-            deleteButton.addEventListener('click', () => removePackage(metadata));
+            deleteButton.addEventListener('click', () => removeGroup(group));
             actions.append(openButton, deleteButton);
             row.append(details, actions);
             list.append(row);
         }
 
-        const count = packages.length;
-        element('offline-package-count').textContent = `${count} ${count === 1 ? 'download' : 'downloads'}`;
+        const count = groups.length;
+        element('offline-package-count').textContent = `${count} offline ${count === 1 ? 'song' : 'songs'}`;
         empty.hidden = count !== 0;
         setStorageSummary(estimate);
     }
@@ -136,27 +172,50 @@ export function createOfflineCatalog({
     }
 
     async function refresh() {
-        packages = await listPackages();
-        if (!Array.isArray(packages)) packages = [];
+        groups = groupCompletePackages(await listPackages());
         renderPackages(await readStorageEstimate());
     }
 
-    async function removePackage(metadata) {
-        const revision = metadata?.revision;
-        if (!revision || busyRevision) return;
-        const label = packageLabel(metadata);
-        if (!confirmDelete(label)) return;
-
-        busyRevision = revision;
+    async function openGroup(group) {
+        const revision = group?.metadata?.revision;
+        const key = group?.filename;
+        if (!revision || !key || busyGroups.has(key)) return;
+        busyGroups.add(key);
         setError();
         renderPackages(await readStorageEstimate());
         try {
-            await deletePackage(revision);
-            await refresh();
+            await openPackage(revision);
         } catch (error) {
-            setError(`Could not delete ${label}. ${error?.message || String(error)}`);
+            setError(`Could not open ${packageLabel(group.metadata)}. ${error?.message || String(error)}`);
         } finally {
-            busyRevision = null;
+            busyGroups.delete(key);
+            renderPackages(await readStorageEstimate());
+        }
+    }
+
+    async function removeGroup(group) {
+        const key = group?.filename;
+        if (!key || busyGroups.has(key)) return;
+        const label = packageLabel(group.metadata);
+        if (!confirmDelete(label, group.packages.length)) return;
+
+        busyGroups.add(key);
+        setError();
+        renderPackages(await readStorageEstimate());
+        let failure = null;
+        try {
+            for (const metadata of group.packages) {
+                try { await deletePackage(metadata.revision); } catch (error) { failure ||= error; }
+            }
+            try { await refresh(); } catch (error) { failure ||= error; }
+            if (failure) {
+                const prefix = group.packages.length === 1
+                    ? `Could not delete ${label}. `
+                    : `Could not delete all stored arrangements for ${label}. `;
+                setError(prefix + (failure?.message || String(failure)));
+            }
+        } finally {
+            busyGroups.delete(key);
             renderPackages(await readStorageEstimate());
         }
     }

@@ -77,11 +77,6 @@ function defaultConfirmDelete(label, count) {
     return globalThis.confirm(`Delete ${subject} from this device?`);
 }
 
-async function defaultStorageEstimate() {
-    if (typeof globalThis.navigator?.storage?.estimate !== 'function') return null;
-    return globalThis.navigator.storage.estimate();
-}
-
 export function createOfflineCatalog({
     document: documentRef = globalThis.document,
     window: windowRef = globalThis.window,
@@ -95,7 +90,6 @@ export function createOfflineCatalog({
     },
     openPackage = defaultOpenPackage,
     confirmDelete = defaultConfirmDelete,
-    estimateStorage = defaultStorageEstimate,
 } = {}) {
     let startPromise = null;
     let groups = [];
@@ -127,14 +121,9 @@ export function createOfflineCatalog({
         target.hidden = !message;
     }
 
-    function setStorageSummary(estimate = null) {
+    function setStorageSummary() {
         const downloadedBytes = groups.reduce((total, group) => total + group.bytes, 0);
-        let summary = `${formatBytes(downloadedBytes)} downloaded`;
-        if (Number.isFinite(estimate?.usage) && Number.isFinite(estimate?.quota)
-                && estimate.quota > 0) {
-            summary += ` · ${formatBytes(estimate.usage)} of ${formatBytes(estimate.quota)} device storage used`;
-        }
-        element('offline-storage-usage').textContent = summary;
+        element('offline-storage-usage').textContent = `${formatBytes(downloadedBytes)} downloaded`;
     }
 
     async function readArtworkSources() {
@@ -159,7 +148,7 @@ export function createOfflineCatalog({
         frame.replaceChildren(fallback);
     }
 
-    async function renderPackages(estimate = null) {
+    async function renderPackages() {
         const generation = ++renderGeneration;
         const artworkSources = await readArtworkSources();
         const nextArtworkUrls = new Set(artworkSources.values());
@@ -208,8 +197,7 @@ export function createOfflineCatalog({
             artist.textContent = metadata?.song?.artist || 'Unknown artist';
             const meta = documentRef.createElement('span');
             meta.className = 'package-meta';
-            const arrangementCount = group.packages.length;
-            meta.textContent = `${arrangementCount} stored ${arrangementCount === 1 ? 'arrangement' : 'arrangements'} · ${formatBytes(group.bytes)}`;
+            meta.textContent = formatBytes(group.bytes);
             details.append(title, artist, meta);
 
             const actions = documentRef.createElement('div');
@@ -234,22 +222,14 @@ export function createOfflineCatalog({
         }
 
         const count = groups.length;
-        element('offline-package-count').textContent = `${count} offline ${count === 1 ? 'song' : 'songs'}`;
+        element('offline-package-count').textContent = `${count} ${count === 1 ? 'song' : 'songs'} ·`;
         empty.hidden = count !== 0;
-        setStorageSummary(estimate);
-    }
-
-    async function readStorageEstimate() {
-        try {
-            return await estimateStorage();
-        } catch (_) {
-            return null;
-        }
+        setStorageSummary();
     }
 
     async function refresh() {
         groups = groupCompletePackages(await listPackages());
-        await renderPackages(await readStorageEstimate());
+        await renderPackages();
     }
 
     async function openGroup(group) {
@@ -258,14 +238,14 @@ export function createOfflineCatalog({
         if (!revision || !key || busyGroups.has(key)) return;
         busyGroups.add(key);
         setError();
-        await renderPackages(await readStorageEstimate());
+        await renderPackages();
         try {
             await openPackage(revision);
         } catch (error) {
             setError(`Could not open ${packageLabel(group.metadata)}. ${error?.message || String(error)}`);
         } finally {
             busyGroups.delete(key);
-            await renderPackages(await readStorageEstimate());
+            await renderPackages();
         }
     }
 
@@ -277,7 +257,7 @@ export function createOfflineCatalog({
 
         busyGroups.add(key);
         setError();
-        await renderPackages(await readStorageEstimate());
+        await renderPackages();
         let failure = null;
         try {
             for (const metadata of group.packages) {
@@ -295,7 +275,7 @@ export function createOfflineCatalog({
             }
         } finally {
             busyGroups.delete(key);
-            await renderPackages(await readStorageEstimate());
+            await renderPackages();
         }
     }
 

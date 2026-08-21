@@ -26,7 +26,7 @@
         * { box-sizing: border-box; }
         [hidden] { display: none !important; }
         body { min-height: 100vh; min-height: 100dvh; margin: 0; background: var(--fb-bg); }
-        button { min-height: 2.75rem; font: inherit; font-weight: 800; cursor: pointer; }
+        button { min-height: 2.75rem; font: inherit; font-size: 0.875rem; font-weight: 800; cursor: pointer; }
         button:focus-visible { outline: 3px solid var(--fb-primary-hi); outline-offset: 2px; }
         button:disabled { cursor: wait; opacity: 0.65; }
         .shell {
@@ -55,7 +55,7 @@
         .retry, .primary, .secondary {
             border: 1px solid transparent;
             border-radius: 0.375rem;
-            padding: 0.625rem 1rem;
+            padding: 0.5rem 0.75rem;
         }
         .retry, .primary { background: var(--fb-primary); color: #082f49; }
         .retry:hover, .primary:hover { background: var(--fb-primary-hi); }
@@ -66,11 +66,11 @@
         }
         .secondary:hover { border-color: var(--fb-text-dim); }
         .danger { border-color: var(--fb-danger); color: #fecaca; }
-        main { padding: 2rem 1rem 3rem; }
-        h1 { margin: 0; font-size: 1.75rem; line-height: 1.2; }
-        p { margin: 0.75rem 0 0; color: var(--fb-text-dim); line-height: 1.55; }
+        main { padding: 1.5rem 1rem 3rem; }
+        h1 { margin: 0; font-size: 1.5rem; line-height: 1.2; }
+        p { margin: 0.5rem 0 0; color: var(--fb-text-dim); line-height: 1.5; }
         .intro { max-width: 40rem; }
-        .manager { margin-top: 2rem; }
+        .manager { margin-top: 1.25rem; }
         .summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.75rem; }
         .summary strong { color: var(--fb-text); font-size: 1.125rem; }
         .summary span { color: var(--fb-text-dim); font-size: 0.875rem; }
@@ -135,7 +135,7 @@
             .package-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
             .package-details { padding: 0.75rem; }
             .package-actions { padding: 0 0.75rem 0.75rem; }
-            .package-actions button { min-height: 2.5rem; padding: 0.5rem; }
+            .package-actions button { min-height: 2.75rem; padding: 0.375rem; }
         }
         @media (max-width: 23rem) {
             .package-list { grid-template-columns: minmax(0, 1fr); }
@@ -151,9 +151,8 @@
         </header>
         <main>
             <section class="intro" aria-labelledby="offline-title">
-                <h1 id="offline-title">Downloaded practice</h1>
-                <p>Your fee[dB]ack server cannot be reached. You can still open practice packages saved on this device.</p>
-                <p>Reconnect and reload once if the cached Player is not available yet.</p>
+                <h1 id="offline-title">Offline practice</h1>
+                <p>Open downloaded songs while your server is unavailable.</p>
             </section>
             <p id="offline-storage-loading">Checking downloaded songs...</p>
             <section class="manager" id="offline-package-manager" hidden aria-live="polite">

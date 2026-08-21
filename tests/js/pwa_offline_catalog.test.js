@@ -94,11 +94,15 @@ function metadata(revision, {
 
 test('recovery document is package-only and Retry remains independent', () => {
     const html = fs.readFileSync(HTML_PATH, 'utf8');
-    assert.match(html, /Downloaded practice/);
+    assert.match(html, /<h1 id="offline-title">Offline practice<\/h1>/);
+    assert.match(html, /Open downloaded songs while your server is unavailable\./);
+    assert.doesNotMatch(html, /Downloaded practice|Reconnect and reload|practice packages saved/);
     assert.match(html, /id="offline-package-list"/);
     assert.match(html, /id="offline-storage-usage"/);
     assert.match(html, /\.package-artwork[\s\S]*aspect-ratio: 1/);
     assert.match(html, /\.package-artwork-fallback/);
+    assert.match(html, /grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+    assert.match(html, /\.package-actions button \{ min-height: 2\.75rem/);
     assert.match(html, /window\.location\.assign\('\/v3\/'\)/);
     assert.doesNotMatch(html, /id="player"|id="highway"|Offline Library|offline-search/);
     assert.doesNotMatch(html, /\/static\/highway\.js|device-catalog/);
@@ -117,21 +121,21 @@ test('complete packages render as logical songs with count, sizes, Open, and Del
         openPackageStore: async () => {},
         listPackages: async () => packages,
         openPackage: (revision) => { opened.push(revision); },
-        estimateStorage: async () => ({ usage: 20 * 1024 * 1024, quota: 100 * 1024 * 1024 }),
     });
 
     assert.equal(await controller.start(), true);
     assert.equal(document.elements.get('offline-package-manager').hidden, false);
     assert.equal(document.elements.get('offline-storage-loading').hidden, true);
-    assert.equal(document.elements.get('offline-package-count').textContent, '2 offline songs');
-    assert.match(document.elements.get('offline-storage-usage').textContent, /8\.0 MB downloaded/);
-    assert.match(document.elements.get('offline-storage-usage').textContent, /20 MB of 100 MB device storage used/);
+    assert.equal(document.elements.get('offline-package-count').textContent, '2 songs ·');
+    assert.equal(document.elements.get('offline-storage-usage').textContent, '8.0 MB downloaded');
+    assert.doesNotMatch(document.elements.get('offline-storage-usage').textContent, /device storage|100 MB/);
     const rows = document.elements.get('offline-package-list').children;
     assert.equal(rows.length, 2);
     assert.equal(rows[0].className, 'package-card');
     assert.equal(rows[0].children[1].children[0].textContent, 'Stored Song');
     assert.equal(rows[0].children[1].children[1].textContent, 'Stored Artist');
-    assert.match(rows[0].children[1].children[2].textContent, /1 stored arrangement · 4\.0 MB/);
+    assert.equal(rows[0].children[1].children[2].textContent, '4.0 MB');
+    assert.doesNotMatch(rows[0].children[1].children[2].textContent, /arrangement/i);
     assert.equal(rows[0].children[2].children[0].getAttribute('data-offline-open'), REVISION_A);
     assert.equal(rows[0].children[2].children[1].getAttribute('data-offline-delete'), REVISION_A);
 
@@ -157,15 +161,14 @@ test('recovery groups decoded filenames with deterministic song, arrangement, an
         openPackageStore: async () => {},
         listPackages: async () => packages,
         openPackage: async (revision) => { opened.push(revision); },
-        estimateStorage: async () => null,
     });
 
     await controller.start();
 
     const rows = document.elements.get('offline-package-list').children;
-    assert.equal(document.elements.get('offline-package-count').textContent, '2 offline songs');
+    assert.equal(document.elements.get('offline-package-count').textContent, '2 songs ·');
     assert.equal(rows.length, 2);
-    assert.match(rows[0].children[1].children[2].textContent, /3 stored arrangements · 12 MB/);
+    assert.equal(rows[0].children[1].children[2].textContent, '12 MB');
     assert.equal(rows[0].children[2].children[0].getAttribute('data-offline-open'), REVISION_A);
     assert.equal(rows[1].children[2].children[0].getAttribute('data-offline-open'), revisionD);
     await rows[0].children[2].children[0].dispatch('click');
@@ -206,7 +209,6 @@ test('recovery renders cached artwork once per song, falls back cleanly, and rev
             },
             remove: async () => {},
         },
-        estimateStorage: async () => null,
     });
 
     await controller.start();
@@ -240,7 +242,6 @@ test('recovery replaces artwork that fails to decode with the neutral fallback',
             read: async () => ({ blob: async () => ({ corrupt: true }) }),
             remove: async () => {},
         },
-        estimateStorage: async () => null,
     });
 
     await controller.start();
@@ -267,7 +268,6 @@ test('Open builds an explicit one-shot offline app URL', async () => {
             document,
             openPackageStore: async () => {},
             listPackages: async () => [metadata(REVISION_A)],
-            estimateStorage: async () => null,
         });
         await controller.start();
         await document.elements.get('offline-package-list').children[0]
@@ -285,11 +285,10 @@ test('empty package storage shows a useful empty state', async () => {
         document,
         openPackageStore: async () => {},
         listPackages: async () => [],
-        estimateStorage: async () => null,
     });
 
     assert.equal(await controller.start(), true);
-    assert.equal(document.elements.get('offline-package-count').textContent, '0 offline songs');
+    assert.equal(document.elements.get('offline-package-count').textContent, '0 songs ·');
     assert.equal(document.elements.get('offline-package-empty').hidden, false);
     assert.equal(document.elements.get('offline-storage-usage').textContent, '0 B downloaded');
 });
@@ -330,7 +329,6 @@ test('Delete requires confirmation and refreshes the package list', async () => 
             read: async () => null,
             remove: async (filename) => { removedArtwork.push(filename); },
         },
-        estimateStorage: async () => null,
     });
     await controller.start();
     await document.elements.get('offline-package-list').children[0]
@@ -339,7 +337,7 @@ test('Delete requires confirmation and refreshes the package list', async () => 
     assert.deepEqual(confirmations, ['Stored Artist - Stored Song']);
     assert.deepEqual(deleted, [REVISION_A]);
     assert.deepEqual(removedArtwork, ['Stored Song.sloppak']);
-    assert.equal(document.elements.get('offline-package-count').textContent, '0 offline songs');
+    assert.equal(document.elements.get('offline-package-count').textContent, '0 songs ·');
     assert.equal(document.elements.get('offline-package-empty').hidden, false);
 });
 
@@ -366,7 +364,6 @@ test('group Delete removes revisions sequentially and keeps survivors visible af
             read: async () => null,
             remove: async (filename) => { removedArtwork.push(filename); },
         },
-        estimateStorage: async () => null,
     });
     await controller.start();
 
@@ -376,10 +373,10 @@ test('group Delete removes revisions sequentially and keeps survivors visible af
     assert.deepEqual(confirmations, [['Stored Artist - Stored Song', 2]]);
     assert.deepEqual(deleted, [REVISION_A, REVISION_B]);
     assert.deepEqual(removedArtwork, []);
-    assert.equal(document.elements.get('offline-package-count').textContent, '1 offline song');
+    assert.equal(document.elements.get('offline-package-count').textContent, '1 song ·');
     assert.equal(document.elements.get('offline-package-list').children.length, 1);
-    assert.match(document.elements.get('offline-package-list').children[0]
-        .children[1].children[2].textContent, /1 stored arrangement/);
+    assert.equal(document.elements.get('offline-package-list').children[0]
+        .children[1].children[2].textContent, '4.0 MB');
     assert.match(document.elements.get('offline-storage-error').textContent, /delete blocked/);
 });
 
@@ -397,7 +394,6 @@ test('cancelled or failed deletion preserves the downloaded package', async () =
                 listPackages: async () => [metadata(REVISION_A)],
                 deletePackage,
                 confirmDelete,
-                estimateStorage: async () => null,
             });
             await controller.start();
             await document.elements.get('offline-package-list').children[0]

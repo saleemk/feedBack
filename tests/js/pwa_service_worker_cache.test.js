@@ -11,7 +11,7 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v10';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v11';
 const SHARED_ARTWORK_ASSET = '/static/js/offline-artwork-cache.js';
 const RECOVERY_ASSETS = [
     '/static/v3/offline.html',

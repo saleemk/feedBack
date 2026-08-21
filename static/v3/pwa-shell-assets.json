@@ -46,6 +46,7 @@
     "/static/js/library.js",
     "/static/js/loops.js",
     "/static/js/offline-app.js",
+    "/static/js/offline-artwork-cache.js",
     "/static/js/offline-practice-player.js",
     "/static/js/player-controls.js",
     "/static/js/player-state.js",

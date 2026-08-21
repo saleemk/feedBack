@@ -3,6 +3,10 @@ import {
     listCompletePracticePackages,
     openPracticePackageStore,
 } from '../js/practice-package-store.js';
+import {
+    deleteOfflineArtwork,
+    readOfflineArtwork,
+} from '../js/offline-artwork-cache.js';
 
 function packageLabel(metadata) {
     const artist = metadata?.song?.artist || 'Unknown artist';
@@ -80,16 +84,36 @@ async function defaultStorageEstimate() {
 
 export function createOfflineCatalog({
     document: documentRef = globalThis.document,
+    window: windowRef = globalThis.window,
+    objectUrls = globalThis.URL,
     openPackageStore = openPracticePackageStore,
     listPackages = listCompletePracticePackages,
     deletePackage = deleteCompletePracticePackage,
+    artwork = {
+        read: readOfflineArtwork,
+        remove: deleteOfflineArtwork,
+    },
     openPackage = defaultOpenPackage,
     confirmDelete = defaultConfirmDelete,
     estimateStorage = defaultStorageEstimate,
 } = {}) {
     let startPromise = null;
     let groups = [];
+    let renderGeneration = 0;
+    let activeArtworkUrls = new Set();
     const busyGroups = new Set();
+
+    function revokeArtworkUrls(urls = activeArtworkUrls) {
+        for (const url of urls) {
+            try { objectUrls?.revokeObjectURL?.(url); } catch {}
+        }
+        if (urls === activeArtworkUrls) activeArtworkUrls = new Set();
+    }
+
+    windowRef?.addEventListener?.('beforeunload', () => {
+        renderGeneration += 1;
+        revokeArtworkUrls();
+    }, { once: true });
 
     function element(id) {
         const target = documentRef?.getElementById(id);
@@ -113,7 +137,38 @@ export function createOfflineCatalog({
         element('offline-storage-usage').textContent = summary;
     }
 
-    function renderPackages(estimate = null) {
+    async function readArtworkSources() {
+        const entries = await Promise.all(groups.map(async (group) => {
+            try {
+                const response = await artwork.read(group.filename);
+                if (!response || typeof response.blob !== 'function'
+                        || typeof objectUrls?.createObjectURL !== 'function') return null;
+                const url = objectUrls.createObjectURL(await response.blob());
+                return [group.filename, url];
+            } catch {
+                return null;
+            }
+        }));
+        return new Map(entries.filter(Boolean));
+    }
+
+    function showArtworkFallback(frame) {
+        const fallback = documentRef.createElement('div');
+        fallback.className = 'package-artwork-fallback';
+        fallback.setAttribute('aria-hidden', 'true');
+        frame.replaceChildren(fallback);
+    }
+
+    async function renderPackages(estimate = null) {
+        const generation = ++renderGeneration;
+        const artworkSources = await readArtworkSources();
+        const nextArtworkUrls = new Set(artworkSources.values());
+        if (generation !== renderGeneration) {
+            revokeArtworkUrls(nextArtworkUrls);
+            return;
+        }
+        revokeArtworkUrls();
+        activeArtworkUrls = nextArtworkUrls;
         const list = element('offline-package-list');
         const empty = element('offline-package-empty');
         list.replaceChildren();
@@ -122,19 +177,40 @@ export function createOfflineCatalog({
             const metadata = group.metadata;
             const revision = metadata.revision;
             const isBusy = busyGroups.has(group.filename);
-            const row = documentRef.createElement('li');
-            row.className = 'package-row';
+            const card = documentRef.createElement('li');
+            card.className = 'package-card';
+
+            const artworkFrame = documentRef.createElement('div');
+            artworkFrame.className = 'package-artwork';
+            const artworkUrl = artworkSources.get(group.filename);
+            if (artworkUrl) {
+                const image = documentRef.createElement('img');
+                image.className = 'package-artwork-image';
+                image.alt = '';
+                image.addEventListener('error', () => {
+                    activeArtworkUrls.delete(artworkUrl);
+                    revokeArtworkUrls(new Set([artworkUrl]));
+                    showArtworkFallback(artworkFrame);
+                }, { once: true });
+                image.setAttribute('src', artworkUrl);
+                artworkFrame.append(image);
+            } else {
+                showArtworkFallback(artworkFrame);
+            }
 
             const details = documentRef.createElement('div');
             details.className = 'package-details';
             const title = documentRef.createElement('strong');
             title.className = 'package-title';
-            title.textContent = packageLabel(metadata);
+            title.textContent = metadata?.song?.title || metadata?.source?.filename || 'Untitled song';
+            const artist = documentRef.createElement('span');
+            artist.className = 'package-artist';
+            artist.textContent = metadata?.song?.artist || 'Unknown artist';
             const meta = documentRef.createElement('span');
             meta.className = 'package-meta';
             const arrangementCount = group.packages.length;
             meta.textContent = `${arrangementCount} stored ${arrangementCount === 1 ? 'arrangement' : 'arrangements'} · ${formatBytes(group.bytes)}`;
-            details.append(title, meta);
+            details.append(title, artist, meta);
 
             const actions = documentRef.createElement('div');
             actions.className = 'package-actions';
@@ -153,8 +229,8 @@ export function createOfflineCatalog({
             if (revision) deleteButton.setAttribute('data-offline-delete', revision);
             deleteButton.addEventListener('click', () => removeGroup(group));
             actions.append(openButton, deleteButton);
-            row.append(details, actions);
-            list.append(row);
+            card.append(artworkFrame, details, actions);
+            list.append(card);
         }
 
         const count = groups.length;
@@ -173,7 +249,7 @@ export function createOfflineCatalog({
 
     async function refresh() {
         groups = groupCompletePackages(await listPackages());
-        renderPackages(await readStorageEstimate());
+        await renderPackages(await readStorageEstimate());
     }
 
     async function openGroup(group) {
@@ -182,14 +258,14 @@ export function createOfflineCatalog({
         if (!revision || !key || busyGroups.has(key)) return;
         busyGroups.add(key);
         setError();
-        renderPackages(await readStorageEstimate());
+        await renderPackages(await readStorageEstimate());
         try {
             await openPackage(revision);
         } catch (error) {
             setError(`Could not open ${packageLabel(group.metadata)}. ${error?.message || String(error)}`);
         } finally {
             busyGroups.delete(key);
-            renderPackages(await readStorageEstimate());
+            await renderPackages(await readStorageEstimate());
         }
     }
 
@@ -201,13 +277,16 @@ export function createOfflineCatalog({
 
         busyGroups.add(key);
         setError();
-        renderPackages(await readStorageEstimate());
+        await renderPackages(await readStorageEstimate());
         let failure = null;
         try {
             for (const metadata of group.packages) {
                 try { await deletePackage(metadata.revision); } catch (error) { failure ||= error; }
             }
             try { await refresh(); } catch (error) { failure ||= error; }
+            if (!groups.some((entry) => entry.filename === key)) {
+                try { await artwork.remove(key); } catch (error) { failure ||= error; }
+            }
             if (failure) {
                 const prefix = group.packages.length === 1
                     ? `Could not delete ${label}. `
@@ -216,7 +295,7 @@ export function createOfflineCatalog({
             }
         } finally {
             busyGroups.delete(key);
-            renderPackages(await readStorageEstimate());
+            await renderPackages(await readStorageEstimate());
         }
     }
 

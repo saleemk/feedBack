@@ -11,14 +11,16 @@ const SOURCE = fs.readFileSync(
     'utf8',
 );
 const ORIGIN = 'https://feedback.test';
-const RECOVERY_CACHE = 'feedback-pwa-offline-v9';
+const RECOVERY_CACHE = 'feedback-pwa-offline-v10';
+const SHARED_ARTWORK_ASSET = '/static/js/offline-artwork-cache.js';
 const RECOVERY_ASSETS = [
     '/static/v3/offline.html',
     '/static/v3/offline-catalog.js',
+    SHARED_ARTWORK_ASSET,
     '/static/js/practice-package-store.js',
 ];
-const SHELL_CACHE = 'feedback-pwa-shell-v8';
-const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v7';
+const SHELL_CACHE = 'feedback-pwa-shell-v9';
+const PREVIOUS_SHELL_CACHE = 'feedback-pwa-shell-v8';
 const SHELL_MARKER = '/__feedback-pwa-shell-complete__';
 const MANIFEST_URL = '/static/v3/pwa-shell-assets.json';
 const PLUGINS_URL = '/api/plugins';
@@ -177,7 +179,7 @@ function successfulResponses() {
     const manifestBody = JSON.stringify({
         schema: 'feedback.pwa-shell-assets.v1',
         source: '/static/v3/index.html',
-        assets: ['/static/app.js', '/static/v3/index.html'],
+        assets: ['/static/app.js', SHARED_ARTWORK_ASSET, '/static/v3/index.html'],
     });
     const pluginsBody = JSON.stringify([
         {
@@ -224,6 +226,7 @@ function successfulResponses() {
             [MANIFEST_URL]: new FakeResponse(manifestBody, { headers: { ETag: 'manifest' } }),
             [PLUGINS_URL]: new FakeResponse(pluginsBody, { headers: { ETag: 'plugins' } }),
             '/static/app.js': new FakeResponse('core app'),
+            [SHARED_ARTWORK_ASSET]: new FakeResponse('artwork cache'),
             '/static/v3/index.html': new FakeResponse('core shell'),
             '/api/plugins/mobile%20ui/screen.js': new FakeResponse('plugin entry'),
             '/api/plugins/mobile%20ui/settings.html': new FakeResponse('plugin settings'),
@@ -257,6 +260,7 @@ test('successful install publishes one complete shell candidate', async () => {
         '/api/plugins/mobile%20ui/src/main%20file.js',
         '/api/plugins/section_map/screen.js',
         '/static/app.js',
+        SHARED_ARTWORK_ASSET,
         '/static/v3/index.html',
     ].sort());
     assert.equal(await (await shell.match(MANIFEST_URL)).text(), configured.manifestBody);
@@ -288,8 +292,8 @@ test('successful install publishes one complete shell candidate', async () => {
     assert.equal(shellPuts.at(-1).url, SHELL_MARKER);
 });
 
-test('v8 upgrade replaces v7 only after a complete candidate activates', async (t) => {
-    await t.test('successful install builds v8 while preserving complete v7', async () => {
+test('v9 upgrade replaces v8 only after a complete candidate activates', async (t) => {
+    await t.test('successful install builds v9 while preserving complete v8', async () => {
         const configured = successfulResponses();
         const harness = createHarness({
             responses: configured.responses,
@@ -308,7 +312,7 @@ test('v8 upgrade replaces v7 only after a complete candidate activates', async (
         );
     });
 
-    await t.test('failed v8 install preserves complete v7', async () => {
+    await t.test('failed v9 install preserves complete v8', async () => {
         const configured = successfulResponses();
         configured.responses['/static/app.js'] = new FakeResponse('failed', { status: 503 });
         const harness = createHarness({
@@ -324,7 +328,7 @@ test('v8 upgrade replaces v7 only after a complete candidate activates', async (
         assert.equal(harness.hasCache(PREVIOUS_SHELL_CACHE), true);
     });
 
-    await t.test('activation preserves v7 until v8 is complete', async () => {
+    await t.test('activation preserves v8 until v9 is complete', async () => {
         for (const currentEntries of [{}, { '/static/app.js': new FakeResponse('partial') }]) {
             const incomplete = createHarness({
                 seedCaches: {

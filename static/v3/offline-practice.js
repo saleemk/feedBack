@@ -8,6 +8,10 @@ import {
     downloadPracticePackage,
     downloadPracticePackages,
 } from '../js/practice-package-client.js';
+import {
+    cacheOfflineArtwork,
+    deleteOfflineArtwork,
+} from '../js/offline-artwork-cache.js';
 import { playOfflinePracticePackage } from '../js/session.js';
 
 const TOOLBAR_ID = 'v3-songs-offline';
@@ -102,6 +106,10 @@ export function createOfflinePracticeController({
     },
     download = downloadPracticePackage,
     downloadMany = downloadPracticePackages,
+    artwork = {
+        capture: cacheOfflineArtwork,
+        remove: deleteOfflineArtwork,
+    },
     launch = playOfflinePracticePackage,
     confirm = (options) => defaultConfirm(options, windowRef),
 } = {}) {
@@ -181,6 +189,12 @@ export function createOfflinePracticeController({
 
     function canUseOfflineActions(song) {
         return song?.provider === 'local' && !!song?.filename;
+    }
+
+    function captureArtworkDetached(filename) {
+        void Promise.resolve()
+            .then(() => artwork.capture(filename))
+            .catch(() => {});
     }
 
     function decorateVisibleCards() {
@@ -352,6 +366,9 @@ export function createOfflinePracticeController({
                 try { await store.deletePackage(metadata.revision); } catch (error) { failure ||= error; }
             }
             try { await refresh(); } catch (error) { failure ||= error; }
+            if (!groupCompletePackages(packages).some((entry) => entry.filename === key)) {
+                try { await artwork.remove(key); } catch (error) { failure ||= error; }
+            }
             if (failure) {
                 notify(windowRef, stored.length === 1 ? 'Offline delete failed' : 'Offline delete incomplete',
                     failure.message || String(failure), '!', '#EF4444');
@@ -385,6 +402,8 @@ export function createOfflinePracticeController({
 
     async function synchronizePackages() {
         packages = await store.listPackages();
+        const groups = groupCompletePackages(packages);
+        groups.forEach((group) => captureArtworkDetached(group.filename));
         rebuildOfflineFilenames();
         updateCount();
         decorateVisibleCards();
@@ -484,6 +503,7 @@ export function createOfflinePracticeController({
             const result = batch
                 ? await downloadMany({ ...options, arrangementIndexes: missing.map((arrangement) => arrangement.index) })
                 : await download(options);
+            captureArtworkDetached(song.filename);
             await refresh();
             const metadata = Array.isArray(result) ? result[0] : result;
             notify(windowRef, batch ? 'Offline arrangements stored' : 'Offline bundle stored',

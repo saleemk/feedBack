@@ -880,8 +880,8 @@ test('offline status replaces and restores the visible Library card format badge
 
     assert.equal(badge.textContent, 'OFFLINE');
     assert.equal(badge.title, 'Stored for offline practice');
-    assert.match(badge.className, /\bbg-amber-400\b/);
-    assert.match(badge.className, /\btext-black\b/);
+    assert.match(badge.className, /\bbg-pink-700\b/);
+    assert.match(badge.className, /\btext-white\b/);
 
     storedPackages = [];
     await controller.refresh();

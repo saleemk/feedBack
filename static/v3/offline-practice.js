@@ -225,8 +225,7 @@ export function createOfflinePracticeController({
                     badge.title = 'Stored for offline practice';
                 }
                 badge.className = String(badge.dataset.offlineOriginalClass || badge.className || '')
-                    .replace(/\bbg-fb-primary\b/g, 'bg-amber-400')
-                    .replace(/\btext-white\b/g, 'text-black');
+                    .replace(/\bbg-fb-primary\b/g, 'bg-pink-700');
                 return;
             }
             badge.textContent = badge.dataset.offlineOriginalText || '';
